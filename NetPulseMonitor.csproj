@@ -13,6 +13,7 @@
     <Version>1.0.1</Version>
     <Authors>NetPulse Monitor contributors</Authors>
     <Description>Windows network availability, latency, outage, and speed monitor.</Description>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
 
 </Project>
