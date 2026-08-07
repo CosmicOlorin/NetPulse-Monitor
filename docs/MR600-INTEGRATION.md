@@ -37,7 +37,9 @@ Requirements:
 - private/LAN addresses only by default
 - cancellation on application shutdown and short, explicit connect/request timeouts
 - serialized router requests to avoid the firmware's busy-session behavior
-- configurable polling, initially 10 seconds, with exponential backoff after failures
+- a 1-second live refresh target, with exactly one status read in flight at a time
+- skipped ticks rather than overlapping requests when a read takes longer than one second
+- exponential backoff after busy responses, session failures, or loss of connectivity, returning to 1-second refresh after recovery
 - read-only requests only; no reboot, SMS, band lock, cell lock, PIN, network selection, firmware update, or configuration changes
 
 ### 2. Remote access
@@ -101,14 +103,16 @@ No captured router traffic or proprietary firmware assets should be committed to
 
 ## User experience
 
-Add a **Router** section in Settings:
+Add a **TP-Link router** page to the first-run setup experience. This is an application onboarding step, not an MSI/installer property page, so credentials cannot leak into installer command lines or logs. The user can skip it and configure the router later.
+
+The first-run page and the matching **Router** section in Settings contain:
 
 - Enable TP-Link MR600 monitoring
 - Router address
 - Password (masked, with a Show button)
 - Remember password on this PC
 - Test connection
-- Polling interval
+- Live refresh: 1 second (with automatic protective backoff)
 - Clear saved password
 
 The dashboard can show a separate LTE card group with signal quality, RSRP, RSRQ, SNR, band, PCI, cell/EARFCN, carrier, SIM status, monthly use, and router traffic rates. All value controls must auto-fit or elide safely so unexpected firmware strings remain inside their boxes.
@@ -124,10 +128,12 @@ The dashboard can show a separate LTE card group with signal quality, RSRP, RSRQ
 
 ## Acceptance criteria
 
+- first-run setup accepts a router address and password only, can be skipped, and can be reopened later
 - password-only local login works on the validated MR600 v5 firmware
 - no router configuration is changed
 - all operations have cancellation and bounded timeouts
-- session expiry recovers without UI freezes
+- telemetry normally refreshes every second without overlapping router requests or blocking the UI
+- busy/offline responses slow polling automatically and session expiry recovers without UI freezes
 - wrong credentials produce a clear local error without logging the password
 - all LTE values remain inside their cards at 100%, 125%, 150%, 175%, and 200% Windows scaling
 - the feature degrades cleanly when a field is absent on another MR600 revision

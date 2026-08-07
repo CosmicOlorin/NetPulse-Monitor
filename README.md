@@ -66,3 +66,9 @@ benchmarks. Results vary with provider location, routing, Wi-Fi and server load.
 - `NetworkDiagnostics.cs` — gateway, DNS and IP diagnostics
 - `CsvLogger.cs` — durable CSV output
 - `PingChartControl.cs` — dependency-free live chart
+
+## Planned TP-Link support
+
+The read-only Archer MR600 integration planned for v1.0.2 is documented in
+[`docs/MR600-INTEGRATION.md`](docs/MR600-INTEGRATION.md). It includes a
+skippable first-run password-only setup and protected one-second live telemetry.
