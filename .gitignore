@@ -1,5 +1,6 @@
 .vs/
 .dotnet/
+.dotnet-home/
 bin/
 obj/
 artifacts/

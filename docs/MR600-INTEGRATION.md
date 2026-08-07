@@ -1,143 +1,152 @@
-# TP-Link Archer MR600 integration plan for v1.0.2
+# TP-Link Archer MR600 integration
 
-## Scope
+## Supported scope
 
-NetPulse Monitor v1.0.2 should add optional, read-only LTE router telemetry without changing router configuration. The first supported target is an Archer MR600 v5 running firmware `1.5.0 0.9.1 v0001.0 Build 251231 Rel.54154n`.
+NetPulse Monitor 1.0.2 includes optional local LTE telemetry for the
+TP-Link Archer MR600 v5 firmware family. The validated target is hardware v5
+running firmware `1.5.0 0.9.1 v0001.0 Build 251231 Rel.54154n`.
 
-The local web interface was inspected in a signed-in session on 2026-08-07. No password, session token, cookie, IMEI, MAC address, IP address, DNS address, Wi-Fi name, or other identifying value was copied into this repository.
+The local administration login is password-only. NetPulse does not display,
+request or store a username for this provider.
 
-## What the router exposes
+## Telemetry
 
-The live MR600 v5 status page exposes the following useful read-only values:
+The provider requests an allowlisted set of read-only values:
 
-- ISP and network type
-- LTE band and PCI
-- SIM readiness
-- signal percentage
-- RSRP, RSRQ, and SNR
-- cell ID and EARFCN
-- monthly data usage
-- current upload and download rates
-- hardware and firmware versions
+- ISP, network type and registration state;
+- PCell/SCell band information and primary EARFCN;
+- PCI and cell ID when the firmware/Cell Lock state exposes them;
+- SIM readiness and signal percentage;
+- RSRP, RSRQ, SNR and RSSI;
+- total usage and current upload/download rates;
+- hardware and firmware versions.
 
-The local administration login is password-only. NetPulse must not display or require a username for this mode.
+Telemetry requests are read-only. Reboot, SMS, SIM PIN, network selection,
+firmware, Wi-Fi and general router settings are not implemented.
 
-## Supported connection modes
+## LTE history and Cell Lock
 
-### 1. Local router mode for v1.0.2
+The app maintains a private local history keyed by LTE band combination and
+primary EARFCN, adding PCI and CID when available. Confirmed ping outages
+are attributed to the most recently observed cell; transient router-page errors
+are not counted as mobile disconnections. Speed-test results are attached only
+when the same cell remains active for the complete test.
 
-This is the supported implementation target. NetPulse connects directly to the router on the user's LAN, normally through `http://192.168.1.1` or `http://tplinkmodem.net`.
+A ranked recommendation requires at least ten minutes of connected observation
+and one speed test. Confirmed disconnections per connected hour are compared
+first, average download speed second and average upload speed third. Medium or
+high confidence requires longer observation and multiple speed tests.
 
-Requirements:
+Each cell also has four local-time periods: night (00–06), morning (06–12),
+afternoon (12–18) and evening (18–24). Current-period results are blended with
+the all-time baseline as connected time and speed-test samples accumulate. The UI
+shows that evidence weight plus the cell's share of observed traffic; if traffic
+counters are unavailable it shows connection-time share instead. Usage changes
+confidence, never the reliability/download/upload priority.
 
-- user supplies only the local router address and local administration password
-- password is stored with Windows credential protection, never in settings JSON, CSV, diagnostics, or logs
-- one session at a time with automatic re-authentication after expiry
-- strict same-origin requests and no redirects away from the configured router
-- private/LAN addresses only by default
-- cancellation on application shutdown and short, explicit connect/request timeouts
-- serialized router requests to avoid the firmware's busy-session behavior
-- a 1-second live refresh target, with exactly one status read in flight at a time
-- skipped ticks rather than overlapping requests when a read takes longer than one second
-- exponential backoff after busy responses, session failures, or loss of connectivity, returning to 1-second refresh after recovery
-- read-only requests only; no reboot, SMS, band lock, cell lock, PIN, network selection, firmware update, or configuration changes
+The MR600 v5 Cell Lock fields and band masks were verified against the installed
+router page definitions. EARFCN and PCI are required. CID is optional. Manual
+changes require confirmation. Automatic locking is disabled by default and, when
+explicitly enabled, uses only medium/high-confidence recommendations. It checks
+for a changing time-of-day winner every minute, requires a material improvement,
+keeps a 30-minute minimum dwell, allows at most six changes per day and uses a
+90-second internet/LTE validation window.
 
-### 2. Remote access
+Before a change, NetPulse reads and stores the current band and Cell Lock state.
+If validation fails, it restores that state. The rollback record remains in the
+local settings file until validation succeeds or restoration completes, so an
+interrupted app session can recover on the next launch. The user can always
+choose **Restore automatic selection** to disable Cell Lock and set band selection
+to Auto.
 
-TP-Link documents remote use through a TP-Link ID and the Tether mobile app. It also documents direct WAN remote management, which exposes the web interface through a configured WAN port. NetPulse v1.0.2 should not implement either path as an unofficial cloud client or automatically enable WAN management.
+The validated v5 firmware returns live `rfInfoPCellBand`,
+`rfInfoPCellChannel`, `rfInfoSCellBand` and `rfInfoSCellChannel`; the primary
+channel is used as live EARFCN. In automatic mode it does not return live PCI or
+CID. NetPulse therefore learns the B3/B3+B1/B3+B20-style profiles without those
+identifiers, and applies a measured band-only profile with Cell Lock disabled.
+When PCI is available, the same workflow applies the full cell + band target.
+Missing values are never synthesized.
 
-A later remote feature needs one of these supported designs:
+After a stable band or cell transition, NetPulse runs a 20 MB download / 5 MB
+upload test and attributes it only when the same LTE state remains active through
+the complete measurement. Confirmed outage recovery and public-IP changes also
+queue an attributed test. Simultaneous triggers are coalesced after a 12-second
+stability window; periodic tests are a separate setting.
 
-- an official TP-Link desktop/cloud API or SDK with documented authentication, or
-- a user-managed VPN back to the home LAN, allowing the existing local provider to work unchanged, or
-- a separate NetPulse home agent and secured relay designed specifically for remote telemetry
+## Local session behavior
 
-NetPulse must never collect a TP-Link account password until TP-Link provides an official integration method. A VPN is the recommended interim remote-access option.
+1. The destination is normalized and restricted to a private LAN address.
+2. Redirects are disabled.
+3. NetPulse checks whether the router web interface already has an active user.
+4. Setup can replace an existing management session only after explicit user
+   confirmation, matching the MR600 web login's takeover behavior.
+5. Login uses the firmware's AES-CBC and RSA signature exchange.
+6. The session cookie and token remain in memory for that provider instance.
+7. Telemetry object requests are serialized with a one-second refresh target.
+8. Requests that take longer than one second consume their tick; they do not overlap.
+9. Busy and offline failures back off automatically.
+10. A rejected password stops automatic authentication attempts.
+11. Shutdown attempts a short logout and then clears the in-memory session.
 
-## Proposed architecture
+Connect and request stages have explicit time limits and support cancellation.
 
-```text
-Router monitoring UI
-        |
-        v
-IRouterTelemetryProvider
-        |
-        +-- TpLinkMr600LocalProvider (v1.0.2)
-        +-- Unsupported/diagnostic provider
+## Password storage
 
-TpLinkMr600LocalProvider
-        +-- capability probe
-        +-- password-only session
-        +-- cancellable polling
-        +-- normalized telemetry
-        +-- secret redaction
-```
-
-Suggested interfaces:
-
-```csharp
-public interface IRouterTelemetryProvider : IAsyncDisposable
-{
-    Task<RouterCapabilities> ProbeAsync(Uri routerUri, CancellationToken cancellationToken);
-    Task ConnectAsync(RouterConnectionOptions options, CancellationToken cancellationToken);
-    Task<RouterTelemetry> ReadAsync(CancellationToken cancellationToken);
-    Task DisconnectAsync(CancellationToken cancellationToken);
-}
-```
-
-`RouterTelemetry` should normalize firmware-specific names into nullable fields. Missing fields are a supported result, not a failure, because MR600 hardware and firmware revisions expose different capabilities.
-
-## Protocol work required
-
-The official MR600 v5 emulator uses TP-Link's local `/cgi` object protocol, a session token header, cookies, and firmware-dependent request encryption. The live v5 page proves the desired values exist, but implementation must not assume the emulator's login exchange is byte-for-byte identical to firmware build 251231.
-
-Before implementing the provider:
-
-1. Add an opt-in protocol diagnostic that records only request paths, response status, field names, timing, and firmware version.
-2. Redact request bodies, response values, headers, cookies, tokens, passwords, and identifiers before data reaches logging code.
-3. Capture one local login and one status refresh from the target firmware.
-4. Implement the smallest firmware adapter needed for password-only login and status reads.
-5. Verify logout, timeout, cancellation, session expiry, wrong-password handling, router reboot, and temporary loss of LAN connectivity.
-
-No captured router traffic or proprietary firmware assets should be committed to the repository.
-
-## User experience
-
-Add a **TP-Link router** page to the first-run setup experience. This is an application onboarding step, not an MSI/installer property page, so credentials cannot leak into installer command lines or logs. The user can skip it and configure the router later.
-
-The first-run page and the matching **Router** section in Settings contain:
-
-- Enable TP-Link MR600 monitoring
-- Router address
-- Password (masked, with a Show button)
-- Remember password on this PC
-- Test connection
-- Live refresh: 1 second (with automatic protective backoff)
-- Clear saved password
-
-The dashboard can show a separate LTE card group with signal quality, RSRP, RSRQ, SNR, band, PCI, cell/EARFCN, carrier, SIM status, monthly use, and router traffic rates. All value controls must auto-fit or elide safely so unexpected firmware strings remain inside their boxes.
+When **Remember password** is enabled, the password is stored as a generic
+credential by Windows Credential Manager. It is never written to settings JSON,
+CSV, diagnostic output, release packages or source control. Disabling remember
+removes the stored credential and keeps the password only for the current app
+session.
 
 ## Logging and privacy
 
-- keep LTE telemetry in a separate CSV file
-- mask cell ID by default in diagnostics exports
-- omit IMEI, MAC addresses, IP addresses, DNS addresses, SSIDs, and session details
-- never log secrets or raw router responses
-- emit events for connection loss, SIM state changes, band/cell changes, and configurable signal thresholds
-- provide an explicit **Include network identifiers** opt-in for user-generated support bundles
+Router telemetry uses a separate `router-telemetry.csv` file. Cell ID is masked.
+Passwords, hashes, AES keys, RSA signatures, cookies, tokens, raw request bodies,
+raw responses, IMEI, MAC addresses, IP addresses, DNS addresses and SSIDs are
+excluded.
 
-## Acceptance criteria
+The unmasked optional CID can exist in `lte-cell-history.json` and in a temporary
+rollback record in `settings.json`. Both stay under `%LOCALAPPDATA%\NetPulseMonitor`
+and are never included in CSV or diagnostics.
 
-- first-run setup accepts a router address and password only, can be skipped, and can be reopened later
-- password-only local login works on the validated MR600 v5 firmware
-- no router configuration is changed
-- all operations have cancellation and bounded timeouts
-- telemetry normally refreshes every second without overlapping router requests or blocking the UI
-- busy/offline responses slow polling automatically and session expiry recovers without UI freezes
-- wrong credentials produce a clear local error without logging the password
-- all LTE values remain inside their cards at 100%, 125%, 150%, 175%, and 200% Windows scaling
-- the feature degrades cleanly when a field is absent on another MR600 revision
-- secret scans and packet/log review show no password, token, cookie, or personal network identifier
+## SMS operations
+
+The validated MR600 v5 firmware exposes the SIM inbox through
+`LTE_SMS_RECVMSGBOX` and `LTE_SMS_RECVMSGENTRY`. NetPulse pages through at most
+100 messages, marks only the opened entry with `unread=0`, and sends through
+`LTE_SMS_SENDNEWMSG` using the same serialized provider gate as telemetry.
+Sending is always initiated and confirmed by the user. `sendResult` is polled
+with a bounded timeout; busy and failure states are reported without an automatic
+retry that could duplicate a message.
+
+The unread notification count comes from `smsUnreadCount` in the existing
+`LTE_NET_STATUS` read. Message sender, recipient and content are not written to
+settings, diagnostics, events or CSV logs.
+
+## Remote access
+
+TP-Link ID/Tether remote login is not implemented. No supported public desktop
+cloud API for this router workflow is documented by TP-Link. NetPulse therefore
+does not collect TP-Link account credentials or enable WAN administration. A
+user-managed VPN back to the router LAN is the recommended remote approach.
+
+## Verification
+
+`tests/NetPulseMonitor.ProtocolTests` runs a local encrypted mock MR600 and checks:
+
+- login AES/RSA compatibility and token propagation;
+- LTE stack discovery and allowlisted telemetry request construction;
+- telemetry parsing, LTE band mapping and 64-bit counters;
+- optional-CID Cell Lock construction and LTE band-mask encoding;
+- restoration of the original automatic-selection state;
+- LTE history ranking with reliability ahead of download and upload;
+- different morning/evening winners, evidence weighting and traffic-use share;
+- clear wrong-password rejection;
+- refusal to connect to a public Internet destination;
+- outage, band, cell and public-IP speed-test trigger coordination;
+- migration of ADSL/VDSL and FTTB/FTTH into their combined profiles.
+
+No captured router traffic or proprietary firmware assets are committed.
 
 ## Official references
 
@@ -146,4 +155,4 @@ The dashboard can show a separate LTE card group with signal quality, RSRP, RSRQ
 - [TP-Link remote-management guidance](https://www.tp-link.com/us/support/faq/1553/)
 - [TP-Link Tether remote-management guidance](https://www.tp-link.com/us/support/faq/1971/)
 - [Official Archer MR600 v5 emulator](https://emulator.tp-link.com/MR600v5%20emulator/index.htm)
-
+- [TP-Link Cell Lock guide](https://www.tp-link.com/uk/support/faq/4986/)

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Compile Include="..\..\AppSettings.cs" Link="AppSettings.cs" />
+    <Compile Include="..\..\AutomaticSpeedTestCoordinator.cs" Link="AutomaticSpeedTestCoordinator.cs" />
+    <Compile Include="..\..\Models.cs" Link="Models.cs" />
+    <Compile Include="..\..\RouterModels.cs" Link="RouterModels.cs" />
+    <Compile Include="..\..\LteCellHistoryStore.cs" Link="LteCellHistoryStore.cs" />
+    <Compile Include="..\..\LteAutoLockPolicy.cs" Link="LteAutoLockPolicy.cs" />
+    <Compile Include="..\..\TpLinkCrypto.cs" Link="TpLinkCrypto.cs" />
+    <Compile Include="..\..\TpLinkMr600Provider.cs" Link="TpLinkMr600Provider.cs" />
+  </ItemGroup>
+</Project>

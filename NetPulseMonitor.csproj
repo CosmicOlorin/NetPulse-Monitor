@@ -8,12 +8,19 @@
     <Nullable>enable</Nullable>
     <RootNamespace>NetPulseMonitor</RootNamespace>
     <AssemblyName>NetPulseMonitor</AssemblyName>
+    <AssemblyTitle>NetPulse Monitor</AssemblyTitle>
+    <Product>NetPulse Monitor</Product>
+    <Company>NetPulse Monitor Contributors</Company>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\NetPulse.ico</ApplicationIcon>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <Authors>NetPulse Monitor contributors</Authors>
-    <Description>Windows network availability, latency, outage, and speed monitor.</Description>
+    <Description>Windows Internet, local-link, LTE router, outage, and speed monitor.</Description>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="tests\**\*.cs" />
+  </ItemGroup>
 
 </Project>

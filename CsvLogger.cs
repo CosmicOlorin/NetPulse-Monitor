@@ -10,6 +10,7 @@ internal sealed class CsvLogger
     public string LogFolder { get; }
     public string EventsPath { get; }
     public string SpeedTestsPath { get; }
+    public string RouterTelemetryPath { get; }
 
     public CsvLogger()
     {
@@ -19,11 +20,14 @@ internal sealed class CsvLogger
 
         EventsPath = Path.Combine(LogFolder, "connection-events.csv");
         SpeedTestsPath = Path.Combine(LogFolder, "speed-tests.csv");
+        RouterTelemetryPath = Path.Combine(LogFolder, "router-telemetry.csv");
 
         Directory.CreateDirectory(LogFolder);
         EnsureFile(EventsPath, "Timestamp,Kind,Message,DurationSeconds");
         EnsureFile(SpeedTestsPath,
             "Timestamp,LatencyMs,JitterMs,PacketLossPercent,DownloadMbps,UploadMbps,Warning");
+        EnsureFile(RouterTelemetryPath,
+            "Timestamp,Status,ISP,NetworkType,Band,SignalPercent,RSRPdBm,RSRQdB,SNRdB,PCI,CellIdMasked,EARFCN,TotalBytes,UploadBytesPerSecond,DownloadBytesPerSecond");
     }
 
     private void EnsureFile(string path, string header)
@@ -52,6 +56,26 @@ internal sealed class CsvLogger
                 result.Warning ?? ""));
     }
 
+    public void LogRouterTelemetry(RouterTelemetry telemetry)
+    {
+        Append(RouterTelemetryPath,
+            Csv(telemetry.Timestamp,
+                telemetry.Status,
+                telemetry.Isp,
+                telemetry.NetworkType,
+                telemetry.Band,
+                telemetry.SignalPercent,
+                telemetry.RsrpDbm,
+                telemetry.RsrqDb,
+                telemetry.SnrDb,
+                telemetry.Pci,
+                MaskIdentifier(telemetry.CellId),
+                telemetry.Earfcn,
+                telemetry.TotalBytes,
+                telemetry.UploadBytesPerSecond,
+                telemetry.DownloadBytesPerSecond));
+    }
+
     private void Append(string path, string row)
     {
         lock (_gate)
@@ -70,5 +94,15 @@ internal sealed class CsvLogger
             };
             return "\"" + text.Replace("\"", "\"\"") + "\"";
         }));
+    }
+
+    private static string MaskIdentifier(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value == "-")
+            return "";
+        string trimmed = value.Trim();
+        return trimmed.Length <= 4
+            ? new string('•', trimmed.Length)
+            : new string('•', trimmed.Length - 4) + trimmed[^4..];
     }
 }
