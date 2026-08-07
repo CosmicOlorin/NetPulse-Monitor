@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>NetPulseMonitor</RootNamespace>
+    <AssemblyName>NetPulseMonitor</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>1.0.0</Version>
+    <Authors>NetPulse Monitor contributors</Authors>
+    <Description>Windows network availability, latency, outage, and speed monitor.</Description>
+  </PropertyGroup>
+
+</Project>

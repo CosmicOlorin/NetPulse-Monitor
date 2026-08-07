@@ -1,0 +1,10 @@
+.vs/
+.dotnet/
+bin/
+obj/
+artifacts/
+Published/
+*.user
+*.suo
+dotnet-install.ps1
+.packages/
