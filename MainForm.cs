@@ -44,13 +44,15 @@ internal sealed class MainForm : Form
         _settings.Normalize();
         _engine = CreateEngine();
 
+        AutoScaleMode = AutoScaleMode.Dpi;
         Text = "NetPulse Monitor";
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(1050, 720);
         Size = new Size(1260, 810);
         BackColor = Color.FromArgb(244, 247, 250);
         Font = new Font("Segoe UI", 9F);
-        Icon = SystemIcons.Application;
+        Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath)
+               ?? SystemIcons.Application;
 
         BuildInterface();
         ConfigureTray();
@@ -101,27 +103,38 @@ internal sealed class MainForm : Form
 
     private void BuildInterface()
     {
-        var header = new Panel
+        var header = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 76,
-            BackColor = Color.White
+            Height = 88,
+            BackColor = Color.White,
+            ColumnCount = 2,
+            RowCount = 2,
+            Padding = new Padding(18, 8, 18, 7)
         };
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+        header.RowStyles.Add(new RowStyle(SizeType.Absolute, 43));
+        header.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         var title = new Label
         {
             Text = "NetPulse Monitor",
             Font = new Font("Segoe UI", 20, FontStyle.Bold),
-            AutoSize = true,
-            Location = new Point(18, 12)
+            Dock = DockStyle.Fill,
+            AutoSize = false,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Margin = Padding.Empty
         };
 
         var subtitle = new Label
         {
             Text = "Continuous LTE and internet connection monitoring",
             ForeColor = Color.DimGray,
-            AutoSize = true,
-            Location = new Point(21, 49)
+            Dock = DockStyle.Fill,
+            AutoSize = false,
+            TextAlign = ContentAlignment.TopLeft,
+            Margin = new Padding(3, 0, 0, 0)
         };
 
         _statusBadge.Text = "STARTING";
@@ -130,12 +143,13 @@ internal sealed class MainForm : Form
         _statusBadge.BackColor = Color.DarkGoldenrod;
         _statusBadge.TextAlign = ContentAlignment.MiddleCenter;
         _statusBadge.Size = new Size(130, 36);
-        _statusBadge.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        _statusBadge.Location = new Point(ClientSize.Width - 150, 20);
+        _statusBadge.Dock = DockStyle.Fill;
+        _statusBadge.Margin = new Padding(10, 10, 0, 10);
 
-        header.Controls.Add(title);
-        header.Controls.Add(subtitle);
-        header.Controls.Add(_statusBadge);
+        header.Controls.Add(title, 0, 0);
+        header.Controls.Add(subtitle, 0, 1);
+        header.Controls.Add(_statusBadge, 1, 0);
+        header.SetRowSpan(_statusBadge, 2);
         Controls.Add(header);
 
         var tabs = new TabControl
@@ -155,13 +169,15 @@ internal sealed class MainForm : Form
         var footerPanel = new Panel
         {
             Dock = DockStyle.Bottom,
-            Height = 30,
+            Height = 38,
             BackColor = Color.White
         };
 
-        _footer.AutoSize = true;
+        _footer.AutoSize = false;
+        _footer.Dock = DockStyle.Fill;
         _footer.ForeColor = Color.DimGray;
-        _footer.Location = new Point(10, 7);
+        _footer.Padding = new Padding(10, 0, 10, 0);
+        _footer.TextAlign = ContentAlignment.MiddleLeft;
         _footer.Text = "Logs: " + _logger.LogFolder;
         footerPanel.Controls.Add(_footer);
         Controls.Add(footerPanel);
@@ -182,7 +198,7 @@ internal sealed class MainForm : Form
             ColumnCount = 1
         };
 
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 238));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 270));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
 
@@ -446,23 +462,27 @@ internal sealed class MainForm : Form
         var captionLabel = new Label
         {
             Text = caption,
-            AutoSize = true,
+            AutoSize = false,
+            Dock = DockStyle.Top,
+            Height = 26,
             ForeColor = Color.DimGray,
             Font = new Font("Segoe UI", 8.5F),
-            Location = new Point(12, 10)
+            TextAlign = ContentAlignment.BottomLeft,
+            Padding = new Padding(12, 0, 8, 0)
         };
 
-        var valueLabel = new Label
+        var valueLabel = new AutoFitLabel
         {
             Text = "-",
-            AutoSize = true,
-            Font = new Font("Segoe UI", 17, FontStyle.Bold),
-            Location = new Point(10, 36)
+            Dock = DockStyle.Fill,
+            MaximumFontSize = 16F,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Padding = new Padding(10, 0, 8, 0)
         };
 
         _metrics[key] = valueLabel;
-        card.Controls.Add(captionLabel);
         card.Controls.Add(valueLabel);
+        card.Controls.Add(captionLabel);
         grid.Controls.Add(card, column, row);
     }
 
@@ -722,7 +742,7 @@ internal sealed class MainForm : Form
             Close();
         });
 
-        _trayIcon.Icon = SystemIcons.Application;
+        _trayIcon.Icon = Icon;
         _trayIcon.Text = "NetPulse Monitor";
         _trayIcon.ContextMenuStrip = menu;
         _trayIcon.Visible = true;
