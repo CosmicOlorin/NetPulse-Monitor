@@ -87,8 +87,7 @@ internal sealed class MainForm : Form
     private int _lastUnreadSmsCount = -1;
     private string _cellHistorySortColumn = "Rank";
     private bool _cellHistorySortAscending = true;
-    private readonly HashSet<string> _collapsedCellGroups =
-        new(StringComparer.Ordinal);
+    private readonly HashSet<int> _collapsedTimePeriodGroups = [];
     private IReadOnlyList<RouterSmsMessage> _smsMessages = [];
 
     public MainForm()
@@ -678,8 +677,8 @@ internal sealed class MainForm : Form
             if (args.RowIndex < 0 ||
                 _cellHistoryGrid.Rows[args.RowIndex].Tag is not CellHistoryGroupRow group)
                 return;
-            if (!_collapsedCellGroups.Add(group.Key))
-                _collapsedCellGroups.Remove(group.Key);
+            if (!_collapsedTimePeriodGroups.Add(group.PeriodId))
+                _collapsedTimePeriodGroups.Remove(group.PeriodId);
             RefreshCellHistory(force: true);
         };
 
@@ -1415,51 +1414,71 @@ internal sealed class MainForm : Form
         _lastCellHistoryRevision = revision;
         _lastCellHistoryPeriod = period;
 
-        string? selectedKey = _cellHistoryGrid.SelectedRows.Count > 0
-            ? (_cellHistoryGrid.SelectedRows[0].Tag as LteCellRecommendation)?.Key
+        string? selectedKey = _cellHistoryGrid.SelectedRows.Count > 0 &&
+                              _cellHistoryGrid.SelectedRows[0].Tag is
+                                  LteCellRecommendation selected
+            ? GetCellHistoryRowKey(selected)
             : null;
-        IReadOnlyList<LteCellRecommendation> recommendations =
+        IReadOnlyList<LteCellRecommendation> currentRecommendations =
             _cellHistory.GetRecommendations();
+        IReadOnlyList<LteCellRecommendation> history =
+            _cellHistory.GetHistoryRecommendations();
 
         _cellHistoryGrid.Rows.Clear();
-        int eligibleRank = 0;
         var ranks = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (LteCellRecommendation item in recommendations)
-            ranks[item.Key] = item.IsEligible ? (++eligibleRank).ToString() : "-";
-
-        IReadOnlyList<LteCellRecommendation> sorted =
-            SortCellHistory(recommendations).ToArray();
-        foreach (IGrouping<string, LteCellRecommendation> group in sorted.GroupBy(
-                     GetCellHistoryGroupKey,
-                     StringComparer.Ordinal))
+        foreach (IGrouping<int, LteCellRecommendation> periodGroup in
+                 history.GroupBy(item => item.PeriodId))
         {
-            LteCellRecommendation[] profiles = group.ToArray();
-            if (profiles.Length > 1)
+            int eligibleRank = 0;
+            foreach (LteCellRecommendation item in periodGroup)
             {
-                bool collapsed = _collapsedCellGroups.Contains(group.Key);
-                LteCellRecommendation cell = profiles[0];
-                int groupRowIndex = _cellHistoryGrid.Rows.Add(
-                    collapsed ? "▶" : "▼",
-                    "PCell group",
-                    $"{cell.PrimaryBand} ({profiles.Length} profiles)",
-                    cell.Earfcn,
-                    cell.Pci,
-                    cell.CellId ?? "-",
-                    "", "", "", "", "", "", "", "");
-                DataGridViewRow groupRow = _cellHistoryGrid.Rows[groupRowIndex];
-                groupRow.Tag = new CellHistoryGroupRow(group.Key);
-                groupRow.DefaultCellStyle.BackColor = Color.FromArgb(225, 235, 244);
-                groupRow.DefaultCellStyle.ForeColor = Color.FromArgb(25, 70, 105);
-                groupRow.DefaultCellStyle.Font = _cellGroupFont;
-                if (collapsed)
-                    continue;
+                ranks[GetCellHistoryRowKey(item)] = item.IsEligible
+                    ? (++eligibleRank).ToString(CultureInfo.CurrentCulture)
+                    : "-";
             }
-
-            foreach (LteCellRecommendation item in profiles)
-                AddCellHistoryRow(item, ranks[item.Key], selectedKey);
         }
 
-        LteCellRecommendation? best = recommendations.FirstOrDefault(item => item.IsEligible);
+        IEnumerable<IGrouping<int, LteCellRecommendation>> periodGroups =
+            history.GroupBy(item => item.PeriodId);
+        periodGroups = _cellHistorySortColumn == "Period" &&
+                       !_cellHistorySortAscending
+            ? periodGroups.OrderByDescending(group => group.Key)
+            : periodGroups.OrderBy(group => group.Key);
+        foreach (IGrouping<int, LteCellRecommendation> group in periodGroups)
+        {
+            LteCellRecommendation[] profiles = SortCellHistory(group).ToArray();
+            if (profiles.Length == 0)
+                continue;
+
+            bool collapsed = _collapsedTimePeriodGroups.Contains(group.Key);
+            LteCellRecommendation first = profiles[0];
+            string profileCount = profiles.Length == 1
+                ? "1 profile"
+                : $"{profiles.Length} profiles";
+            int groupRowIndex = _cellHistoryGrid.Rows.Add(
+                collapsed ? "▶" : "▼",
+                first.TimePeriod,
+                profileCount,
+                "", "", "", "", "", "", "", "", "", "", "");
+            DataGridViewRow groupRow = _cellHistoryGrid.Rows[groupRowIndex];
+            groupRow.Tag = new CellHistoryGroupRow(group.Key);
+            groupRow.DefaultCellStyle.BackColor = Color.FromArgb(225, 235, 244);
+            groupRow.DefaultCellStyle.ForeColor = Color.FromArgb(25, 70, 105);
+            groupRow.DefaultCellStyle.Font = _cellGroupFont;
+            if (collapsed)
+                continue;
+
+            foreach (LteCellRecommendation item in profiles)
+            {
+                AddCellHistoryRow(
+                    item,
+                    ranks[GetCellHistoryRowKey(item)],
+                    selectedKey);
+            }
+        }
+
+        LteCellRecommendation? best = currentRecommendations
+            .FirstOrDefault(item => item.IsEligible);
         if (best is not null)
         {
             string cid = string.IsNullOrWhiteSpace(best.CellId) || best.CellId == "-"
@@ -1472,12 +1491,14 @@ internal sealed class MainForm : Form
                 $"{best.TimePeriod}: {best.Band}, {radioTarget}, {cid}. " +
                 $"Current-period evidence weight {best.TimeEvidenceWeightPercent:0}% " +
                 $"({best.UsageSharePercent:0.#}% observed {best.UsageBasis} share). " +
-                $"Reliability first: {best.DisconnectionsPerHour:0.00} confirmed drops/h; then " +
-                $"{FormatMbps(best.AverageDownloadMbps)} down and " +
-                $"{FormatMbps(best.AverageUploadMbps)} up. Confidence: {best.Confidence}.";
+                $"Weighted score {best.WeightedScore:0.0}/100: " +
+                $"50% download ({FormatMbps(best.AverageDownloadMbps)}), " +
+                $"40% disconnections ({best.DisconnectionsPerHour:0.00}/h), " +
+                $"10% upload ({FormatMbps(best.AverageUploadMbps)}). " +
+                $"Confidence: {best.Confidence}.";
             _cellSuggestion.ForeColor = Color.FromArgb(25, 82, 45);
         }
-        else if (recommendations.Count > 0)
+        else if (currentRecommendations.Count > 0)
         {
             _cellSuggestion.Text =
                 "Collecting evidence: each recommendation needs at least 10 connected minutes " +
@@ -1546,17 +1567,15 @@ internal sealed class MainForm : Form
             row.DefaultCellStyle.ForeColor = Color.DimGray;
         if (item.UserAdded)
             row.DefaultCellStyle.BackColor = Color.FromArgb(250, 247, 232);
-        if (string.Equals(item.Key, selectedKey, StringComparison.Ordinal))
+        if (string.Equals(
+                GetCellHistoryRowKey(item),
+                selectedKey,
+                StringComparison.Ordinal))
             row.Selected = true;
     }
 
-    private static string GetCellHistoryGroupKey(LteCellRecommendation item) =>
-        string.Join(
-            "|",
-            item.PrimaryBand.ToUpperInvariant(),
-            item.Earfcn,
-            item.Pci,
-            item.CellId ?? "*");
+    private static string GetCellHistoryRowKey(LteCellRecommendation item) =>
+        $"{item.PeriodId}|{item.Key}";
 
     private void SortCellHistoryByColumn(int columnIndex)
     {
@@ -2128,7 +2147,10 @@ internal sealed class MainForm : Form
                 _settings.LastAutomaticCellLockKey,
                 StringComparison.Ordinal));
         if (current is not null && current.Key != best.Key &&
-            !LteAutoLockPolicy.IsMeaningfullyBetter(best, current))
+            !LteAutoLockPolicy.IsMeaningfullyBetter(
+                best,
+                current,
+                recommendations))
             return;
 
         _ = ApplyCellLockWithRollbackAsync(best, target!, automatic: true);
@@ -3260,5 +3282,5 @@ internal sealed class MainForm : Form
         return $"{Math.Max(1, (int)duration.TotalSeconds)} s";
     }
 
-    private sealed record CellHistoryGroupRow(string Key);
+    private sealed record CellHistoryGroupRow(int PeriodId);
 }

@@ -473,12 +473,12 @@ static void TestCellHistoryRanking()
         IReadOnlyList<LteCellRecommendation> ranked = history.GetRecommendations();
         Require(ranked.Count == 3, "All observed LTE cells should be retained.");
         Require(ranked[0].Band == "B7",
-            "Download should break a reliability tie before upload.");
-        Require(ranked[1].Band == "B3",
-            "The second zero-disconnection cell should follow by download speed.");
-        Require(ranked[2].Band == "B1",
-            "Fewer disconnections must outrank a faster but less reliable cell.");
-        Require(ranked[0].CellId is null,
+            "The 50/40/10 score should prefer the balanced zero-disconnection profile.");
+        Require(ranked[1].Band == "B1",
+            "The fastest profile should rank second after its measured drop-rate penalty.");
+        Require(ranked[2].Band == "B3",
+            "The slowest eligible profile should rank last in this measured set.");
+        Require(ranked.Single(item => item.Band == "B7").CellId is null,
             "CID should remain optional when the router does not report it.");
 
         string bandOnlyHistoryPath = Path.Combine(testFolder, "band-only-history.json");
@@ -592,6 +592,14 @@ static void TestCellHistoryRanking()
             "A full hour with two speed tests should receive full time weight.");
         Require(morningRanked[0].UsageSharePercent > 60,
             "Observed data usage should be represented as a share, not a speed score.");
+        IReadOnlyList<LteCellRecommendation> groupedHistory =
+            timedHistory.GetHistoryRecommendations(morningLocal);
+        Require(groupedHistory.Count(item => item.PeriodId == 1) == 2 &&
+                groupedHistory.Count(item => item.PeriodId == 3) == 2,
+            "LTE history should expose profiles under their measured time periods.");
+        Require(groupedHistory.Select(item => item.PeriodId).Distinct()
+                .SequenceEqual([1, 3]),
+            "Time-period history should not create band or PCell group identities.");
     }
     finally
     {
@@ -647,26 +655,59 @@ static SpeedTestResult Speed(double download, double upload) => new()
 
 static void TestAutoLockPolicy()
 {
-    Require(LteAutoLockPolicy.IsMeaningfullyBetter(
-            Recommendation(0.10, 50, 10),
-            Recommendation(0.20, 200, 50)),
-        "Lower disconnection rate must outrank much higher speed.");
+    LteCellRecommendation bestZeroDrop = Recommendation(0, 34.57, 5.18);
+    LteCellRecommendation slowZeroDrop = Recommendation(0, 2.59, 3.83);
+    LteCellRecommendation fastWithOneDrop = Recommendation(0.89, 19.78, 5.42);
+    LteCellRecommendation[] observedExample =
+        [bestZeroDrop, slowZeroDrop, fastWithOneDrop];
+    LteRecommendationScoring.AssignScores(observedExample);
+    Require(bestZeroDrop.WeightedScore > fastWithOneDrop.WeightedScore &&
+            fastWithOneDrop.WeightedScore > slowZeroDrop.WeightedScore,
+        "The requested 50/40/10 weights should place the faster one-drop " +
+        "profile above the very slow zero-drop profile.");
+
+    LteCellRecommendation reliableSlow = Recommendation(0.10, 50, 10);
+    LteCellRecommendation lessReliableFast = Recommendation(0.20, 200, 50);
+    LteCellRecommendation[] speedWeighted = [reliableSlow, lessReliableFast];
     Require(!LteAutoLockPolicy.IsMeaningfullyBetter(
-            Recommendation(0.20, 500, 100),
-            Recommendation(0.10, 50, 10)),
-        "Download must not override a materially worse disconnection rate.");
+            reliableSlow,
+            lessReliableFast,
+            speedWeighted),
+        "A 40% reliability advantage must not automatically override the " +
+        "combined 60% speed score.");
     Require(LteAutoLockPolicy.IsMeaningfullyBetter(
-            Recommendation(0, 120, 10),
-            Recommendation(0, 100, 50)),
-        "Download should decide after a reliability tie.");
+            lessReliableFast,
+            reliableSlow,
+            speedWeighted),
+        "The 50/40/10 score should allow a materially faster profile to win.");
+
+    LteCellRecommendation fasterDown = Recommendation(0, 140, 10);
+    LteCellRecommendation fasterUp = Recommendation(0, 100, 50);
+    LteCellRecommendation[] downloadWeighted = [fasterDown, fasterUp];
+    Require(LteAutoLockPolicy.IsMeaningfullyBetter(
+            fasterDown,
+            fasterUp,
+            downloadWeighted),
+        "The 50% download share should outweigh the 10% upload share.");
+
+    LteCellRecommendation slowerDown = Recommendation(0, 90, 100);
+    LteCellRecommendation fasterDownLowUpload = Recommendation(0, 100, 10);
+    LteCellRecommendation[] uploadCannotOverride =
+        [slowerDown, fasterDownLowUpload];
     Require(!LteAutoLockPolicy.IsMeaningfullyBetter(
-            Recommendation(0, 90, 100),
-            Recommendation(0, 100, 10)),
-        "Upload must not override a meaningful download loss.");
+            slowerDown,
+            fasterDownLowUpload,
+            uploadCannotOverride),
+        "The 10% upload share must not override the 50% download share.");
+
+    LteCellRecommendation upload40 = Recommendation(0, 100, 40);
+    LteCellRecommendation upload20 = Recommendation(0, 100, 20);
+    LteCellRecommendation[] uploadTieBreak = [upload40, upload20];
     Require(LteAutoLockPolicy.IsMeaningfullyBetter(
-            Recommendation(0, 100, 24),
-            Recommendation(0, 100, 20)),
-        "Upload should decide only after reliability and download ties.");
+            upload40,
+            upload20,
+            uploadTieBreak),
+        "Upload should decide when disconnections and download are equal.");
 
     DateTime now = DateTime.UtcNow;
     var settings = new AppSettings

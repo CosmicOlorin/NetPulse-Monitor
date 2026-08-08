@@ -21,8 +21,9 @@ Values remain **Not measured** until **Run diagnostics** is selected.
 ## LTE history columns
 
 Each normal row is one observed performance profile: a band combination on a
-specific primary cell. When multiple carrier-aggregation profiles share the same
-PCell identity, NetPulse places them under one PCell group.
+specific primary cell during the time period shown by its group. Night, Morning,
+Afternoon and Evening are separate collapsible groups. Band combinations and
+PCell identities remain normal rows; they no longer create group headers.
 
 - **Rank**: recommendation order. Rank 1 is the preferred eligible profile.
 - **Period**: local-time bucket used for the current recommendation.
@@ -41,9 +42,18 @@ PCell identity, NetPulse places them under one PCell group.
 - **Up**: time-weighted average speed-test upload result.
 - **Confidence**: whether enough connected time and speed-test evidence exists.
 
-Click any column header to sort; click it again to reverse the order. Click a
-PCell group row to collapse or expand its carrier-aggregation profiles. Sorting
-changes only the display and never changes the reliability-first ranking rule.
+Click any column header to sort the rows inside each time-period group; click it
+again to reverse the order. Click a time-period group row to collapse or expand
+it. Sorting changes only the display. Rank is calculated from a normalized score:
+50% download, 40% confirmed disconnections per connected hour and 10% upload.
+Confidence controls whether a profile has enough evidence to rank; usage share
+does not add a hidden score.
+
+Download and upload receive `current result / fastest eligible result × 100`
+points inside the same time period. Reliability receives
+`100 / (1 + confirmed drops per connected hour)` points. This gives zero-drop
+profiles full reliability credit without allowing reliability alone to override
+the combined 60% download/upload contribution.
 
 ## Time periods
 

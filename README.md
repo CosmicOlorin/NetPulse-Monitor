@@ -1,6 +1,6 @@
 # NetPulse Monitor
 
-NetPulse Monitor 1.0.2 is a native .NET 8 WinForms application for continuous
+NetPulse Monitor 1.0.3 is a native .NET 8 WinForms application for continuous
 Windows connection monitoring. It runs as a graphical Windows application and
 does not open a console window during normal use.
 
@@ -38,10 +38,10 @@ endorsed by or supported by TP-Link or any mobile/internet provider.
 - LTE signal, RSRP, RSRQ, SNR, PCell/SCell bands, primary EARFCN, SIM, usage and rates
 - PCI/CID display and cell-specific locking when the router firmware exposes them
 - Local LTE cell history with connection time, confirmed disconnects and speed tests
-- Ranked cell + band suggestions: reliability first, then download, then upload
+- Ranked cell + band suggestions: 50% download, 40% disconnections and 10% upload
 - Time-of-day learning with visible usage share and evidence weighting
 - Manual profile entry, Cell Lock and opt-in guarded automatic locking with rollback
-- Grouped LTE history with sortable column headers and preserved PCell identity
+- Time-period-grouped LTE history with sortable columns and preserved PCell identity
 - MR600 SIM inbox, unread Windows notifications, read/reply and direct SMS sending
 - Password-only TP-Link setup with Windows Credential Manager protection
 - Persistent connection-event, speed-test and masked router-telemetry CSV logs
@@ -67,7 +67,7 @@ The **Connection details** tab has two independent selectors:
 General health, speed-test, gateway, DNS and Windows link values work without
 router credentials. LTE radio values are supplied by the MR600 provider.
 Attenuation, DSL SNR margin, sync rates, optical power and ONT status require a
-future compatible router/ONT provider; 1.0.2 labels these fields as requiring
+future compatible router/ONT provider; 1.0.3 labels these fields as requiring
 router or ONT data instead of inventing values.
 
 All tabs use fixed-fit DPI-aware layouts. Settings are arranged in two columns,
@@ -100,17 +100,22 @@ The MR600 permits only one management login. NetPulse owns that login while live
 telemetry is running. Close NetPulse before using the router webpage; normal app
 shutdown logs its router session out.
 
-The **LTE history** tab groups observations by band combination and primary
-EARFCN, adding PCI and CID when the router supplies them. Column headers can be
-clicked to sort the grouped profiles. A recommendation needs at least ten
-connected minutes and one speed test. Ranking uses confirmed disconnects per hour
-first, average download second and average upload third. Provisional rows remain
-visible while evidence is collected. Night, morning, afternoon and evening keep
-separate statistics. The current period is blended gradually with all-time data,
-so sparse data does not cause abrupt decisions. The grid shows the time-period
-evidence weight and each cell's observed data-usage share (or connection-time
-share when traffic counters are unavailable). Usage affects confidence only; it
-never replaces the reliability/download/upload ranking.
+The **LTE history** tab groups observations by local-time period: Night, Morning,
+Afternoon and Evening. Band combinations remain separate rows inside each period;
+PCI and CID are added when the router supplies them. Column headers sort the rows
+inside each period. A recommendation needs at least ten connected minutes and one
+speed test. Eligible profiles receive a normalized score made from 50% download,
+40% confirmed disconnections per connected hour and 10% upload. Provisional rows
+remain visible while evidence is collected. Each period is blended gradually with
+all-time data, so sparse data does not cause abrupt decisions. The grid shows the
+time-period evidence weight and each cell's observed data-usage share (or
+connection-time share when traffic counters are unavailable). Usage affects
+confidence only and does not add a hidden ranking bonus.
+
+Download and upload are scored relative to the fastest eligible profile in the
+same period. The reliability component is `100 / (1 + drops per hour)`, so zero
+drops receives 100 points while repeated drops are penalized progressively rather
+than acting as an absolute veto.
 
 NetPulse queues a fresh 20 MB download / 5 MB upload measurement after a
 confirmed outage recovers and after a stable LTE band, cell or public-IP change.

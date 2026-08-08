@@ -21,6 +21,8 @@ internal sealed class LteCellRecommendation
     public int SpeedTests { get; init; }
     public double? AverageDownloadMbps { get; init; }
     public double? AverageUploadMbps { get; init; }
+    public double WeightedScore { get; set; }
+    public int PeriodId { get; init; }
     public required string TimePeriod { get; init; }
     public TimeSpan PeriodConnectedTime { get; init; }
     public int PeriodDisconnections { get; init; }
@@ -217,34 +219,61 @@ internal sealed class LteCellHistoryStore : IDisposable
         lock (_gate)
         {
             int period = GetTimePeriod(localTime ?? DateTime.Now);
-            long totalPeriodTraffic = _document.Records.Sum(record =>
-                GetExistingPeriodStats(record, period)?.TrafficBytes ?? 0);
-            double totalPeriodSeconds = _document.Records.Sum(record =>
-                GetExistingPeriodStats(record, period)?.ConnectedSeconds ?? 0);
-            return _document.Records
-                .Select(record =>
-                {
-                    CellIdentity display = EnrichIdentity(new CellIdentity(
-                        record.Band,
-                        NormalizePrimaryBand(record.PrimaryBand, record.Band),
-                        record.Earfcn,
-                        record.Pci,
-                        record.CellId));
-                    return ToRecommendation(
-                        record,
-                        display,
-                        period,
-                        totalPeriodTraffic,
-                        totalPeriodSeconds);
-                })
-                .OrderByDescending(item => item.IsEligible)
-                .ThenBy(item => item.IsEligible ? item.DisconnectionsPerHour : double.MaxValue)
-                .ThenByDescending(item => item.IsEligible ? item.AverageDownloadMbps ?? -1 : -1)
-                .ThenByDescending(item => item.IsEligible ? item.AverageUploadMbps ?? -1 : -1)
-                .ThenByDescending(item => item.ConnectedTime)
-                .ThenByDescending(item => item.LastSeenUtc)
-                .ToArray();
+            return BuildRecommendations(period, _document.Records);
         }
+    }
+
+    public IReadOnlyList<LteCellRecommendation> GetHistoryRecommendations(
+        DateTime? localTime = null)
+    {
+        lock (_gate)
+        {
+            int currentPeriod = GetTimePeriod(localTime ?? DateTime.Now);
+            var history = new List<LteCellRecommendation>();
+            for (int period = 0; period < 4; period++)
+            {
+                IEnumerable<LteCellHistoryRecord> records = _document.Records
+                    .Where(record =>
+                        GetExistingPeriodStats(record, period) is not null ||
+                        (period == currentPeriod && record.TimeBuckets.Count == 0));
+                history.AddRange(BuildRecommendations(period, records));
+            }
+            return history;
+        }
+    }
+
+    private IReadOnlyList<LteCellRecommendation> BuildRecommendations(
+        int period,
+        IEnumerable<LteCellHistoryRecord> records)
+    {
+        long totalPeriodTraffic = _document.Records.Sum(record =>
+            GetExistingPeriodStats(record, period)?.TrafficBytes ?? 0);
+        double totalPeriodSeconds = _document.Records.Sum(record =>
+            GetExistingPeriodStats(record, period)?.ConnectedSeconds ?? 0);
+        LteCellRecommendation[] recommendations = records
+            .Select(record =>
+            {
+                CellIdentity display = EnrichIdentity(new CellIdentity(
+                    record.Band,
+                    NormalizePrimaryBand(record.PrimaryBand, record.Band),
+                    record.Earfcn,
+                    record.Pci,
+                    record.CellId));
+                return ToRecommendation(
+                    record,
+                    display,
+                    period,
+                    totalPeriodTraffic,
+                    totalPeriodSeconds);
+            })
+            .ToArray();
+        LteRecommendationScoring.AssignScores(recommendations);
+        return recommendations
+            .OrderByDescending(item => item.IsEligible)
+            .ThenByDescending(item => item.WeightedScore)
+            .ThenByDescending(item => item.ConnectedTime)
+            .ThenByDescending(item => item.LastSeenUtc)
+            .ToArray();
     }
 
     public void AddManualProfile(
@@ -650,6 +679,7 @@ internal sealed class LteCellHistoryStore : IDisposable
                 globalUpload,
                 periodUpload,
                 evidenceWeight),
+            PeriodId = periodId,
             TimePeriod = GetTimePeriodLabel(periodId),
             PeriodConnectedTime = TimeSpan.FromSeconds(period.ConnectedSeconds),
             PeriodDisconnections = period.Disconnections,

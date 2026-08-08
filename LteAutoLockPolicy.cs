@@ -2,7 +2,7 @@ namespace NetPulseMonitor;
 
 internal static class LteAutoLockPolicy
 {
-    private const double ReliabilityMarginPerHour = 0.05;
+    private const double MinimumScoreImprovement = 5;
 
     public static bool CanAttempt(AppSettings settings, DateTime nowUtc)
     {
@@ -16,31 +16,19 @@ internal static class LteAutoLockPolicy
 
     public static bool IsMeaningfullyBetter(
         LteCellRecommendation candidate,
-        LteCellRecommendation current)
+        LteCellRecommendation current,
+        IReadOnlyCollection<LteCellRecommendation> recommendations)
     {
-        if (candidate.DisconnectionsPerHour + ReliabilityMarginPerHour <
-            current.DisconnectionsPerHour)
+        if (!candidate.IsEligible)
+            return false;
+        if (!current.IsEligible)
             return true;
-        if (current.DisconnectionsPerHour + ReliabilityMarginPerHour <
-            candidate.DisconnectionsPerHour)
-            return false;
-
-        double candidateDown = candidate.AverageDownloadMbps ?? 0;
-        double currentDown = current.AverageDownloadMbps ?? 0;
-        if (candidateDown - currentDown >= 5 &&
-            candidateDown >= currentDown * 1.15)
-            return true;
-        if (currentDown - candidateDown >= 5 &&
-            currentDown >= candidateDown * 1.15)
-            return false;
-
-        double downloadTieMargin = Math.Max(3, currentDown * 0.05);
-        if (Math.Abs(candidateDown - currentDown) > downloadTieMargin)
-            return false;
-
-        double candidateUp = candidate.AverageUploadMbps ?? 0;
-        double currentUp = current.AverageUploadMbps ?? 0;
-        return candidateUp - currentUp >= 2 &&
-               candidateUp >= currentUp * 1.20;
+        double candidateScore = LteRecommendationScoring.CalculateScore(
+            candidate,
+            recommendations);
+        double currentScore = LteRecommendationScoring.CalculateScore(
+            current,
+            recommendations);
+        return candidateScore >= currentScore + MinimumScoreImprovement;
     }
 }

@@ -13,6 +13,7 @@
     <Compile Include="..\..\Models.cs" Link="Models.cs" />
     <Compile Include="..\..\RouterModels.cs" Link="RouterModels.cs" />
     <Compile Include="..\..\LteCellHistoryStore.cs" Link="LteCellHistoryStore.cs" />
+    <Compile Include="..\..\LteRecommendationScoring.cs" Link="LteRecommendationScoring.cs" />
     <Compile Include="..\..\LteAutoLockPolicy.cs" Link="LteAutoLockPolicy.cs" />
     <Compile Include="..\..\TpLinkCrypto.cs" Link="TpLinkCrypto.cs" />
     <Compile Include="..\..\TpLinkMr600Provider.cs" Link="TpLinkMr600Provider.cs" />

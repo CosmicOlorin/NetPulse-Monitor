@@ -2,7 +2,7 @@
 
 ## Supported scope
 
-NetPulse Monitor 1.0.2 includes optional local LTE telemetry for the
+NetPulse Monitor 1.0.3 includes optional local LTE telemetry for the
 TP-Link Archer MR600 v5 firmware family. The validated target is hardware v5
 running firmware `1.5.0 0.9.1 v0001.0 Build 251231 Rel.54154n`.
 
