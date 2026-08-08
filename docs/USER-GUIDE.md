@@ -25,6 +25,13 @@ specific primary cell during the time period shown by its group. Night, Morning,
 Afternoon and Evening are separate collapsible groups. Band combinations and
 PCell identities remain normal rows; they no longer create group headers.
 
+A measured connection is stored immediately but remains hidden from LTE History
+until it reaches five connected minutes in that time period. This removes
+short-lived carrier-aggregation combinations without discarding their evidence.
+An unmeasured profile explicitly added in the Cell Lock tab remains visible as a
+manual entry. Automatic refreshes preserve the visible row and do not move the
+grid back to the top while the user is reading or scrolling.
+
 - **Rank**: recommendation order. Rank 1 is the preferred eligible profile.
 - **Period**: local-time bucket used for the current recommendation.
 - **Band**: LTE band profile, for example B3 or B3 + B20.

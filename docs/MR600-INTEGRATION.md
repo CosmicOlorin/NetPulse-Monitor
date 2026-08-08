@@ -2,7 +2,7 @@
 
 ## Supported scope
 
-NetPulse Monitor 1.0.3 includes optional local LTE telemetry for the
+NetPulse Monitor 1.0.4 includes optional local LTE telemetry for the
 TP-Link Archer MR600 v5 firmware family. The validated target is hardware v5
 running firmware `1.5.0 0.9.1 v0001.0 Build 251231 Rel.54154n`.
 
@@ -139,7 +139,7 @@ user-managed VPN back to the router LAN is the recommended remote approach.
 - telemetry parsing, LTE band mapping and 64-bit counters;
 - optional-CID Cell Lock construction and LTE band-mask encoding;
 - restoration of the original automatic-selection state;
-- LTE history ranking with reliability ahead of download and upload;
+- LTE history filtering, time-period grouping and 50/40/10 weighted ranking;
 - different morning/evening winners, evidence weighting and traffic-use share;
 - clear wrong-password rejection;
 - refusal to connect to a public Internet destination;

@@ -62,7 +62,7 @@ internal sealed class TpLinkMr600Provider :
             MaxResponseContentBufferSize = 1024 * 1024
         };
         _client.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "NetPulseMonitor/1.0.3 (Windows; TP-Link local telemetry)");
+            "NetPulseMonitor/1.0.4 (Windows; TP-Link local telemetry)");
         _client.DefaultRequestHeaders.Referrer = _routerUri;
         // The MR600 login page sets this cookie in JavaScript. Non-browser
         // clients must set it explicitly or some firmware builds omit the

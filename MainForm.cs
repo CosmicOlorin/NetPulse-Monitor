@@ -1419,11 +1419,22 @@ internal sealed class MainForm : Form
                                   LteCellRecommendation selected
             ? GetCellHistoryRowKey(selected)
             : null;
-        IReadOnlyList<LteCellRecommendation> currentRecommendations =
+        IReadOnlyList<LteCellRecommendation> allCurrentRecommendations =
             _cellHistory.GetRecommendations();
-        IReadOnlyList<LteCellRecommendation> history =
+        IReadOnlyList<LteCellRecommendation> currentRecommendations =
+            allCurrentRecommendations
+                .Where(LteCellHistoryStore.IsVisibleToUser)
+                .ToArray();
+        IReadOnlyList<LteCellRecommendation> allHistory =
             _cellHistory.GetHistoryRecommendations();
+        IReadOnlyList<LteCellRecommendation> history = allHistory
+            .Where(LteCellHistoryStore.IsVisibleToUser)
+            .ToArray();
+        bool shortProfilesHidden =
+            allCurrentRecommendations.Count > currentRecommendations.Count ||
+            allHistory.Count > history.Count;
 
+        CellHistoryScrollAnchor scrollAnchor = CaptureCellHistoryScrollAnchor();
         _cellHistoryGrid.Rows.Clear();
         var ranks = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (IGrouping<int, LteCellRecommendation> periodGroup in
@@ -1456,8 +1467,8 @@ internal sealed class MainForm : Form
                 ? "1 profile"
                 : $"{profiles.Length} profiles";
             int groupRowIndex = _cellHistoryGrid.Rows.Add(
-                collapsed ? "▶" : "▼",
-                first.TimePeriod,
+                "",
+                $"{(collapsed ? "+" : "−")} {first.TimePeriod}",
                 profileCount,
                 "", "", "", "", "", "", "", "", "", "", "");
             DataGridViewRow groupRow = _cellHistoryGrid.Rows[groupRowIndex];
@@ -1506,12 +1517,27 @@ internal sealed class MainForm : Form
                 "PCI and CID are used when the firmware exposes them.";
             _cellSuggestion.ForeColor = Color.DarkGoldenrod;
         }
+        else if (shortProfilesHidden)
+        {
+            _cellSuggestion.Text =
+                "Collecting LTE history. A connection appears after 5 connected " +
+                "minutes in the same time period.";
+            _cellSuggestion.ForeColor = Color.DarkGoldenrod;
+        }
         else
         {
             _cellSuggestion.Text =
                 "Waiting for LTE observations. PCI and CID are used only when the firmware exposes them.";
             _cellSuggestion.ForeColor = Color.DimGray;
         }
+
+        if (_cellHistoryGrid.SelectedRows.Count == 0 ||
+            _cellHistoryGrid.SelectedRows[0].Tag is not LteCellRecommendation)
+        {
+            _cellHistoryGrid.ClearSelection();
+            _cellHistoryGrid.CurrentCell = null;
+        }
+        RestoreCellHistoryScrollAnchor(scrollAnchor);
 
         if (_settings.AutomaticCellLockEnabled)
         {
@@ -1576,6 +1602,72 @@ internal sealed class MainForm : Form
 
     private static string GetCellHistoryRowKey(LteCellRecommendation item) =>
         $"{item.PeriodId}|{item.Key}";
+
+    private CellHistoryScrollAnchor CaptureCellHistoryScrollAnchor()
+    {
+        int firstRow;
+        try
+        {
+            firstRow = _cellHistoryGrid.FirstDisplayedScrollingRowIndex;
+        }
+        catch (InvalidOperationException)
+        {
+            firstRow = -1;
+        }
+
+        string? recommendationKey = null;
+        int? periodId = null;
+        if (firstRow >= 0 && firstRow < _cellHistoryGrid.Rows.Count)
+        {
+            object? tag = _cellHistoryGrid.Rows[firstRow].Tag;
+            if (tag is LteCellRecommendation recommendation)
+                recommendationKey = GetCellHistoryRowKey(recommendation);
+            else if (tag is CellHistoryGroupRow group)
+                periodId = group.PeriodId;
+        }
+        return new CellHistoryScrollAnchor(firstRow, recommendationKey, periodId);
+    }
+
+    private void RestoreCellHistoryScrollAnchor(CellHistoryScrollAnchor anchor)
+    {
+        if (anchor.RowIndex < 0 || _cellHistoryGrid.Rows.Count == 0)
+            return;
+
+        int rowIndex = -1;
+        for (int index = 0; index < _cellHistoryGrid.Rows.Count; index++)
+        {
+            object? tag = _cellHistoryGrid.Rows[index].Tag;
+            if (tag is LteCellRecommendation recommendation &&
+                anchor.RecommendationKey is not null &&
+                string.Equals(
+                    GetCellHistoryRowKey(recommendation),
+                    anchor.RecommendationKey,
+                    StringComparison.Ordinal))
+            {
+                rowIndex = index;
+                break;
+            }
+            if (tag is CellHistoryGroupRow group &&
+                anchor.PeriodId.HasValue &&
+                group.PeriodId == anchor.PeriodId.Value)
+            {
+                rowIndex = index;
+                break;
+            }
+        }
+
+        if (rowIndex < 0)
+            rowIndex = Math.Min(anchor.RowIndex, _cellHistoryGrid.Rows.Count - 1);
+        try
+        {
+            _cellHistoryGrid.FirstDisplayedScrollingRowIndex = rowIndex;
+        }
+        catch (InvalidOperationException)
+        {
+            // The grid can be relaid out between refresh and restore; the next
+            // automatic refresh will retry with the newly visible anchor.
+        }
+    }
 
     private void SortCellHistoryByColumn(int columnIndex)
     {
@@ -3283,4 +3375,8 @@ internal sealed class MainForm : Form
     }
 
     private sealed record CellHistoryGroupRow(int PeriodId);
+    private sealed record CellHistoryScrollAnchor(
+        int RowIndex,
+        string? RecommendationKey,
+        int? PeriodId);
 }

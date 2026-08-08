@@ -1,6 +1,6 @@
 # NetPulse Monitor
 
-NetPulse Monitor 1.0.3 is a native .NET 8 WinForms application for continuous
+NetPulse Monitor 1.0.4 is a native .NET 8 WinForms application for continuous
 Windows connection monitoring. It runs as a graphical Windows application and
 does not open a console window during normal use.
 
@@ -67,7 +67,7 @@ The **Connection details** tab has two independent selectors:
 General health, speed-test, gateway, DNS and Windows link values work without
 router credentials. LTE radio values are supplied by the MR600 provider.
 Attenuation, DSL SNR margin, sync rates, optical power and ONT status require a
-future compatible router/ONT provider; 1.0.3 labels these fields as requiring
+future compatible router/ONT provider; 1.0.4 labels these fields as requiring
 router or ONT data instead of inventing values.
 
 All tabs use fixed-fit DPI-aware layouts. Settings are arranged in two columns,
@@ -111,6 +111,11 @@ all-time data, so sparse data does not cause abrupt decisions. The grid shows th
 time-period evidence weight and each cell's observed data-usage share (or
 connection-time share when traffic counters are unavailable). Usage affects
 confidence only and does not add a hidden ranking bonus.
+
+Connections remain recorded internally but do not appear in LTE History until
+they reach five connected minutes in that time period. Automatic refreshes keep
+the currently visible row and scroll position instead of returning the grid to
+the top.
 
 Download and upload are scored relative to the fastest eligible profile in the
 same period. The reliability component is `100 / (1 + drops per hour)`, so zero

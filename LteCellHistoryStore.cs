@@ -39,6 +39,8 @@ internal sealed class LteCellHistoryStore : IDisposable
 {
     internal const int MinimumObservationSeconds = 10 * 60;
     internal const int MinimumSpeedTests = 1;
+    internal static readonly TimeSpan MinimumVisiblePeriodTime =
+        TimeSpan.FromMinutes(5);
 
     private static readonly TimeSpan SaveInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan OutageAttributionWindow = TimeSpan.FromMinutes(5);
@@ -241,6 +243,10 @@ internal sealed class LteCellHistoryStore : IDisposable
             return history;
         }
     }
+
+    internal static bool IsVisibleToUser(LteCellRecommendation item) =>
+        item.PeriodConnectedTime >= MinimumVisiblePeriodTime ||
+        (item.UserAdded && item.ConnectedTime <= TimeSpan.Zero);
 
     private IReadOnlyList<LteCellRecommendation> BuildRecommendations(
         int period,

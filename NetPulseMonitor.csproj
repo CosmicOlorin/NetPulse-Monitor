@@ -13,7 +13,7 @@
     <Company>NetPulse Monitor Contributors</Company>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\NetPulse.ico</ApplicationIcon>
-    <Version>1.0.3</Version>
+    <Version>1.0.4</Version>
     <Authors>NetPulse Monitor contributors</Authors>
     <Description>Windows Internet, local-link, LTE router, outage, and speed monitor.</Description>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>

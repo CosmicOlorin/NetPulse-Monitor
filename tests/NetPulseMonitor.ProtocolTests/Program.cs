@@ -441,6 +441,20 @@ static void Require(bool condition, string message)
 
 static void TestCellHistoryRanking()
 {
+    Require(!LteCellHistoryStore.IsVisibleToUser(
+            Recommendation(
+                0,
+                50,
+                10,
+                TimeSpan.FromMinutes(5) - TimeSpan.FromSeconds(1))),
+        "A connection shorter than five minutes should remain hidden from history.");
+    Require(LteCellHistoryStore.IsVisibleToUser(
+            Recommendation(0, 50, 10, TimeSpan.FromMinutes(5))),
+        "A connection should appear after exactly five connected minutes.");
+    Require(LteCellHistoryStore.IsVisibleToUser(
+            Recommendation(0, 0, 0, TimeSpan.Zero, userAdded: true)),
+        "An unmeasured manual profile should remain available to the user.");
+
     string testFolder = Path.Combine(
         Path.GetTempPath(),
         "NetPulseMonitorTests",
@@ -784,7 +798,9 @@ static void TestSettingsMigration()
 static LteCellRecommendation Recommendation(
     double dropsPerHour,
     double download,
-    double upload) => new()
+    double upload,
+    TimeSpan? periodConnectedTime = null,
+    bool userAdded = false) => new()
     {
         Key = Guid.NewGuid().ToString("N"),
         Band = "B3",
@@ -793,8 +809,10 @@ static LteCellRecommendation Recommendation(
         DisconnectionsPerHour = dropsPerHour,
         AverageDownloadMbps = download,
         AverageUploadMbps = upload,
+        PeriodConnectedTime = periodConnectedTime ?? TimeSpan.Zero,
         TimePeriod = "Morning 06–12",
         UsageBasis = "data",
         Confidence = "High",
-        IsEligible = true
+        IsEligible = true,
+        UserAdded = userAdded
     };
