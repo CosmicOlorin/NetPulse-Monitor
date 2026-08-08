@@ -1,6 +1,14 @@
 # NetPulse Monitor
 
-NetPulse Monitor 1.0.5 is a native .NET 8 WinForms application for continuous
+**Privacy-first Windows network and LTE monitoring — local data, explicit router
+control, and no analytics account.**
+
+[Latest release](https://github.com/CosmicOlorin/NetPulse-Monitor/releases/latest)
+· [User guide](docs/USER-GUIDE.md)
+· [Security policy](.github/SECURITY.md)
+· [Privacy notice](PRIVACY.md)
+
+NetPulse Monitor 1.0.6 is a native .NET 8 WinForms application for continuous
 Windows connection monitoring. It runs as a graphical Windows application and
 does not open a console window during normal use.
 
@@ -68,7 +76,7 @@ The **Connection details** tab has two independent selectors:
 General health, speed-test, gateway, DNS and Windows link values work without
 router credentials. LTE radio values are supplied by the MR600 provider.
 Attenuation, DSL SNR margin, sync rates, optical power and ONT status require a
-future compatible router/ONT provider; 1.0.5 labels these fields as requiring
+future compatible router/ONT provider; 1.0.6 labels these fields as requiring
 router or ONT data instead of inventing values.
 
 All tabs use fixed-fit DPI-aware layouts. Settings use vertically aligned rows in
@@ -237,3 +245,14 @@ used solely for the optional focused lock target.
 
 See [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) for plain-language explanations
 of diagnostics, LTE history columns, time periods, Cell Lock and SMS behavior.
+
+## Security, privacy and ownership
+
+Security reports must use GitHub's private vulnerability-reporting channel; do
+not place credentials, SMS content, router exports or unredacted logs in a public
+issue. See [`SECURITY.md`](.github/SECURITY.md) for the reporting process and
+[`PRIVACY.md`](PRIVACY.md) for the exact local and third-party data flows.
+
+Copyright © 2026 CosmicOlorin. All rights reserved. NetPulse Monitor is an
+independent project and is not affiliated with or endorsed by TP-Link or any
+internet/mobile provider. See [`COPYRIGHT.md`](COPYRIGHT.md).

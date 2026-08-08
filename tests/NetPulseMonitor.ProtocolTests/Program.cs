@@ -23,6 +23,7 @@ bool rejectNextStatusAsExpired = false;
 var writeRequests = new List<string>();
 var logoutRequests = new List<string>();
 var smsRequests = new List<string>();
+int sendResultPolls = 0;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
@@ -80,9 +81,22 @@ app.MapPost("/cgi_gdpr", async (HttpRequest request) =>
     else if (plainRequest.Contains("LTE_SMS_SENDNEWMSG", StringComparison.Ordinal))
     {
         smsRequests.Add(plainRequest);
-        plainResponse = plainRequest.Contains("sendResult", StringComparison.Ordinal)
-            ? "[0,0,0,0,0,0]0\r\nsendResult=1\r\n"
-            : "[0,0,0,0,0,0]0\r\n";
+        if (plainRequest.Contains("sendResult", StringComparison.Ordinal))
+        {
+            sendResultPolls++;
+            int sendResult = sendResultPolls switch
+            {
+                1 => 2,
+                2 => 3,
+                _ => 1
+            };
+            plainResponse =
+                $"[0,0,0,0,0,0]0\r\nsendResult={sendResult}\r\n";
+        }
+        else
+        {
+            plainResponse = "[0,0,0,0,0,0]0\r\n";
+        }
     }
     else if (plainRequest.Contains("LTE_SMS_SENDMSGENTRY", StringComparison.Ordinal))
     {
@@ -238,6 +252,8 @@ try
             item.Contains("textContent=Mock line 1\u0011\u0012Mock line 2",
                 StringComparison.Ordinal)),
         "SMS send fields and MR600 newline encoding were not generated correctly.");
+    Require(sendResultPolls == 3,
+        "MR600 transient SMS states should be polled until final confirmation.");
     await provider.SaveSmsDraftAsync(
         "+301234567890",
         "Unsent draft",

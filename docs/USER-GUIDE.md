@@ -142,6 +142,12 @@ names and normalized phone numbers are saved in the local settings file only
 when the user explicitly requests it. NetPulse does not send a test SMS
 automatically.
 
+The **Events** tab and `connection-events.csv` record each outgoing attempt,
+final confirmation and error without the recipient or message content. After the
+MR600 accepts a message, NetPulse waits through its intermediate sending states.
+If final confirmation times out, check **Sent** before retrying so an already
+accepted message is not sent twice.
+
 The MR600 exposes SMS but no incoming voice-call event or call log. NetPulse
 therefore cannot reliably notify for calls made to the SIM. If the mobile
 provider sends a missed-call notification as an SMS, it appears normally in the

@@ -2,7 +2,7 @@
 
 ## Supported scope
 
-NetPulse Monitor 1.0.5 includes optional local LTE telemetry for the
+NetPulse Monitor 1.0.6 includes optional local LTE telemetry for the
 TP-Link Archer MR600 v5 firmware family. The validated target is hardware v5
 running firmware `1.5.0 0.9.1 v0001.0 Build 251231 Rel.54154n`.
 
@@ -119,9 +119,11 @@ the corresponding `LTE_SMS_*MSGBOX` and `LTE_SMS_*MSGENTRY` objects. NetPulse
 pages through at most 100 entries per folder, merges dated messages newest-first,
 marks only an opened unread Inbox entry, and sends or saves drafts through
 `LTE_SMS_SENDNEWMSG` using the same serialized provider gate as telemetry.
-Sending is always initiated and confirmed by the user. `sendResult` is polled
-with a bounded timeout; busy and failure states are reported without an automatic
-retry that could duplicate a message.
+Sending is always initiated and confirmed by the user. `sendResult` values `2`
+and `3` are transient after this firmware accepts the message; NetPulse keeps
+polling until `1` confirms completion. A timeout tells the user to check **Sent**
+before retrying so an already accepted message is not duplicated. Events record
+the attempt, confirmation or error without recipient or message content.
 
 The unread notification count comes from `smsUnreadCount` in the existing
 `LTE_NET_STATUS` read. Draft objects do not expose a timestamp, so the UI labels

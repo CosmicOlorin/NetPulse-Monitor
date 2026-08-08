@@ -10,12 +10,15 @@
     <AssemblyName>NetPulseMonitor</AssemblyName>
     <AssemblyTitle>NetPulse Monitor</AssemblyTitle>
     <Product>NetPulse Monitor</Product>
-    <Company>NetPulse Monitor Contributors</Company>
+    <Company>CosmicOlorin</Company>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\NetPulse.ico</ApplicationIcon>
-    <Version>1.0.5</Version>
-    <Authors>NetPulse Monitor contributors</Authors>
-    <Description>Windows Internet, local-link, LTE router, outage, and speed monitor.</Description>
+    <Version>1.0.6</Version>
+    <Authors>CosmicOlorin</Authors>
+    <Copyright>Copyright © 2026 CosmicOlorin. All rights reserved.</Copyright>
+    <Description>Privacy-first Windows Internet, local-link, LTE router, outage, SMS, and speed monitor.</Description>
+    <RepositoryUrl>https://github.com/CosmicOlorin/NetPulse-Monitor</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
 

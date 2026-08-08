@@ -64,7 +64,7 @@ internal sealed class TpLinkMr600Provider :
             MaxResponseContentBufferSize = 1024 * 1024
         };
         _client.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "NetPulseMonitor/1.0.5 (Windows; TP-Link local telemetry)");
+            "NetPulseMonitor/1.0.6 (Windows; TP-Link local telemetry)");
         _client.DefaultRequestHeaders.Referrer = _routerUri;
         // The MR600 login page sets this cookie in JavaScript. Non-browser
         // clients must set it explicitly or some firmware builds omit the
@@ -369,26 +369,40 @@ internal sealed class TpLinkMr600Provider :
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken);
         timeout.CancelAfter(SmsSendTimeout);
-        while (true)
+        try
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(500), timeout.Token);
-            CgiResponse resultResponse = await SendActionsAsync(
-                [new RouterAction(
-                    1,
-                    "LTE_SMS_SENDNEWMSG",
-                    ZeroStack,
-                    ZeroStack,
-                    ["sendResult"])],
-                timeout.Token);
-            int result = ParseInt(resultResponse.GetFirst(0).Get("sendResult")) ?? 0;
-            if (result == 1)
-                return;
-            if (result == 2)
+            while (true)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(500), timeout.Token);
+                CgiResponse resultResponse = await SendActionsAsync(
+                    [new RouterAction(
+                        1,
+                        "LTE_SMS_SENDNEWMSG",
+                        ZeroStack,
+                        ZeroStack,
+                        ["sendResult"])],
+                    timeout.Token);
+                int result = ParseInt(
+                    resultResponse.GetFirst(0).Get("sendResult")) ?? 0;
+                if (result == 1)
+                    return;
+
+                // Both values are transient after this MR600 accepts an SMS.
+                // Returning an error for 2 prompts a retry and can send the
+                // same message more than once.
+                if (result is 2 or 3)
+                    continue;
+
                 throw new RouterConnectionException(
-                    "The MR600 SMS service is busy. Try again in a moment.");
-            if (result != 3)
-                throw new RouterConnectionException(
-                    "The MR600 could not send the SMS.");
+                    "The MR600 accepted the SMS but returned an unknown delivery " +
+                    "status. Check Sent before trying again to avoid a duplicate.");
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new RouterConnectionException(
+                "The MR600 accepted the SMS but did not confirm it in time. " +
+                "Check Sent before trying again to avoid a duplicate.");
         }
     }
 

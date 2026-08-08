@@ -2144,6 +2144,11 @@ internal sealed class MainForm : Form
             return;
 
         SetSmsBusy(true, "Sending SMS through the MR600...");
+        AddLoggedEvent(new MonitorEvent
+        {
+            Kind = "SMS",
+            Message = "Outgoing SMS attempt started (recipient and content omitted)"
+        });
         bool refresh = false;
         try
         {
@@ -2153,12 +2158,22 @@ internal sealed class MainForm : Form
             _smsComposeInput.Clear();
             _smsStatus.Text = "SMS sent successfully. No recipient or message content was logged.";
             _smsStatus.ForeColor = Color.FromArgb(25, 82, 45);
+            AddLoggedEvent(new MonitorEvent
+            {
+                Kind = "SMS",
+                Message = "Outgoing SMS confirmed by the MR600"
+            });
             refresh = true;
         }
         catch (Exception ex)
         {
             _smsStatus.Text = "SMS was not sent: " + FriendlyUiError(ex);
             _smsStatus.ForeColor = Color.Firebrick;
+            AddLoggedEvent(new MonitorEvent
+            {
+                Kind = "SMS ERROR",
+                Message = "Outgoing SMS attempt: " + FriendlyUiError(ex)
+            });
             MessageBox.Show(
                 "The SMS was not sent.\r\n\r\n" + FriendlyUiError(ex),
                 "MR600 SMS",
