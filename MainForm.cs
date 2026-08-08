@@ -50,6 +50,7 @@ internal sealed class MainForm : Form
     private readonly Label _routerDetails = new();
     private readonly ComboBox _connectionViewInput = new();
     private readonly ComboBox _localLinkInput = new();
+    private readonly ComboBox _observedCellLockInput = new();
     private readonly TextBox _manualBandsInput = new();
     private readonly TextBox _manualEarfcnInput = new();
     private readonly TextBox _manualPciInput = new();
@@ -87,6 +88,8 @@ internal sealed class MainForm : Form
     private int _lastUnreadSmsCount = -1;
     private string _cellHistorySortColumn = "Rank";
     private bool _cellHistorySortAscending = true;
+    private string _observedCellLockFingerprint = "\0";
+    private bool _refreshingObservedCellLockProfiles;
     private readonly HashSet<int> _collapsedTimePeriodGroups = [];
     private IReadOnlyList<RouterSmsMessage> _smsMessages = [];
 
@@ -285,14 +288,17 @@ internal sealed class MainForm : Form
 
     private void ApplyScreenRelativeWindowSize()
     {
-        Rectangle working = Screen.PrimaryScreen?.WorkingArea ??
-                            new Rectangle(0, 0, 1280, 800);
-        int width = Math.Min(working.Width, Math.Max(1050,
+        Rectangle working = Screen.FromPoint(Cursor.Position).WorkingArea;
+        int initialWidth = Math.Min(working.Width, Math.Max(1050,
             (int)Math.Round(working.Width * 0.94)));
-        int height = Math.Min(working.Height, Math.Max(720,
+        int initialHeight = Math.Min(working.Height, Math.Max(720,
             (int)Math.Round(working.Height * 0.94)));
-        MinimumSize = new Size(width, height);
-        Size = MinimumSize;
+        int minimumWidth = Math.Min(initialWidth, Math.Max(920,
+            (int)Math.Round(working.Width * 0.55)));
+        int minimumHeight = Math.Min(initialHeight, Math.Max(640,
+            (int)Math.Round(working.Height * 0.62)));
+        MinimumSize = new Size(minimumWidth, minimumHeight);
+        Size = new Size(initialWidth, initialHeight);
     }
 
     private TabPage BuildDashboardTab()
@@ -816,29 +822,33 @@ internal sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 5,
+            RowCount = 6,
             BackColor = Color.White,
             Padding = new Padding(22, 16, 22, 16),
             Margin = new Padding(5)
         };
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 32));
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 68));
-        for (int row = 0; row < 5; row++)
-            fields.RowStyles.Add(new RowStyle(SizeType.Percent, 20));
+        for (int row = 0; row < 6; row++)
+            fields.RowStyles.Add(new RowStyle(SizeType.Percent, 16.667F));
+        _observedCellLockInput.DropDownStyle = ComboBoxStyle.DropDownList;
+        _observedCellLockInput.SelectedIndexChanged += (_, _) =>
+            UseSelectedObservedCellLockProfile();
         _manualBandsInput.PlaceholderText = "B3 or B3 + B20";
         _manualEarfcnInput.PlaceholderText = "Primary EARFCN";
         _manualPciInput.PlaceholderText = "0-512";
         _manualCidInput.PlaceholderText = "Optional Cell ID";
-        AddManualLockField(fields, 0, "LTE band profile", _manualBandsInput);
-        AddManualLockField(fields, 1, "Primary EARFCN", _manualEarfcnInput);
-        AddManualLockField(fields, 2, "PCI", _manualPciInput);
-        AddManualLockField(fields, 3, "CID (optional)", _manualCidInput);
+        AddManualLockField(fields, 0, "Previously observed set", _observedCellLockInput);
+        AddManualLockField(fields, 1, "LTE band profile", _manualBandsInput);
+        AddManualLockField(fields, 2, "Primary EARFCN", _manualEarfcnInput);
+        AddManualLockField(fields, 3, "PCI", _manualPciInput);
+        AddManualLockField(fields, 4, "CID (optional)", _manualCidInput);
         _manualLockStatus.Dock = DockStyle.Fill;
         _manualLockStatus.TextAlign = ContentAlignment.MiddleLeft;
         _manualLockStatus.ForeColor = Color.DimGray;
         _manualLockStatus.Text =
             "Profiles with the same PCell and EARFCN keep known PCI/CID across carrier aggregation changes.";
-        fields.Controls.Add(_manualLockStatus, 0, 4);
+        fields.Controls.Add(_manualLockStatus, 0, 5);
         fields.SetColumnSpan(_manualLockStatus, 2);
 
         var controls = new FlowLayoutPanel
@@ -1430,6 +1440,7 @@ internal sealed class MainForm : Form
         IReadOnlyList<LteCellRecommendation> history = allHistory
             .Where(LteCellHistoryStore.IsVisibleToUser)
             .ToArray();
+        string? activeProfileKey = _cellHistory.GetActiveProfileKey();
         bool shortProfilesHidden =
             allCurrentRecommendations.Count > currentRecommendations.Count ||
             allHistory.Count > history.Count;
@@ -1451,10 +1462,7 @@ internal sealed class MainForm : Form
 
         IEnumerable<IGrouping<int, LteCellRecommendation>> periodGroups =
             history.GroupBy(item => item.PeriodId);
-        periodGroups = _cellHistorySortColumn == "Period" &&
-                       !_cellHistorySortAscending
-            ? periodGroups.OrderByDescending(group => group.Key)
-            : periodGroups.OrderBy(group => group.Key);
+        periodGroups = OrderTimePeriodGroups(periodGroups, period);
         foreach (IGrouping<int, LteCellRecommendation> group in periodGroups)
         {
             LteCellRecommendation[] profiles = SortCellHistory(group).ToArray();
@@ -1484,9 +1492,15 @@ internal sealed class MainForm : Form
                 AddCellHistoryRow(
                     item,
                     ranks[GetCellHistoryRowKey(item)],
-                    selectedKey);
+                    selectedKey,
+                    item.PeriodId == period && string.Equals(
+                        item.Key,
+                        activeProfileKey,
+                        StringComparison.Ordinal));
             }
         }
+
+        RefreshObservedCellLockProfiles();
 
         LteCellRecommendation? best = currentRecommendations
             .FirstOrDefault(item => item.IsEligible);
@@ -1569,7 +1583,8 @@ internal sealed class MainForm : Form
     private void AddCellHistoryRow(
         LteCellRecommendation item,
         string rank,
-        string? selectedKey)
+        string? selectedKey,
+        bool isActive)
     {
         int rowIndex = _cellHistoryGrid.Rows.Add(
             rank,
@@ -1593,6 +1608,13 @@ internal sealed class MainForm : Form
             row.DefaultCellStyle.ForeColor = Color.DimGray;
         if (item.UserAdded)
             row.DefaultCellStyle.BackColor = Color.FromArgb(250, 247, 232);
+        if (isActive)
+        {
+            row.DefaultCellStyle.BackColor = Color.FromArgb(211, 239, 220);
+            row.DefaultCellStyle.ForeColor = Color.FromArgb(19, 91, 48);
+            row.DefaultCellStyle.SelectionBackColor = Color.FromArgb(112, 190, 137);
+            row.DefaultCellStyle.SelectionForeColor = Color.FromArgb(9, 55, 25);
+        }
         if (string.Equals(
                 GetCellHistoryRowKey(item),
                 selectedKey,
@@ -1602,6 +1624,17 @@ internal sealed class MainForm : Form
 
     private static string GetCellHistoryRowKey(LteCellRecommendation item) =>
         $"{item.PeriodId}|{item.Key}";
+
+    private IEnumerable<IGrouping<int, LteCellRecommendation>> OrderTimePeriodGroups(
+        IEnumerable<IGrouping<int, LteCellRecommendation>> groups,
+        int currentPeriod)
+    {
+        IOrderedEnumerable<IGrouping<int, LteCellRecommendation>> ordered = groups
+            .OrderByDescending(group => group.Key == currentPeriod);
+        return _cellHistorySortColumn == "Period" && !_cellHistorySortAscending
+            ? ordered.ThenByDescending(group => group.Key)
+            : ordered.ThenBy(group => group.Key);
+    }
 
     private CellHistoryScrollAnchor CaptureCellHistoryScrollAnchor()
     {
@@ -1724,6 +1757,80 @@ internal sealed class MainForm : Form
             out long number)
             ? number
             : long.MaxValue;
+
+    private void RefreshObservedCellLockProfiles()
+    {
+        IReadOnlyList<LteCellRecommendation> profiles =
+            _cellHistory.GetObservedLockProfiles();
+        string fingerprint = string.Join("\n", profiles.Select(item =>
+            $"{item.Key}|{item.Band}|{item.Earfcn}|{item.Pci}|{item.CellId}"));
+        if (string.Equals(
+                fingerprint,
+                _observedCellLockFingerprint,
+                StringComparison.Ordinal))
+            return;
+
+        string? selectedKey =
+            (_observedCellLockInput.SelectedItem as ObservedCellLockOption)?.Profile?.Key;
+        _refreshingObservedCellLockProfiles = true;
+        try
+        {
+            _observedCellLockInput.BeginUpdate();
+            _observedCellLockInput.Items.Clear();
+            _observedCellLockInput.Items.Add(new ObservedCellLockOption(
+                profiles.Count == 0
+                    ? "No five-minute observed sets yet"
+                    : "Choose a previously observed set...",
+                null));
+            foreach (LteCellRecommendation profile in profiles)
+                _observedCellLockInput.Items.Add(new ObservedCellLockOption(
+                    FormatObservedCellLockProfile(profile),
+                    profile));
+            _observedCellLockInput.SelectedIndex = Math.Max(
+                0,
+                _observedCellLockInput.Items.Cast<ObservedCellLockOption>()
+                    .Select((item, index) => (item, index))
+                    .FirstOrDefault(pair => string.Equals(
+                        pair.item.Profile?.Key,
+                        selectedKey,
+                        StringComparison.Ordinal)).index);
+            _observedCellLockInput.Enabled = profiles.Count > 0;
+            _observedCellLockFingerprint = fingerprint;
+        }
+        finally
+        {
+            _observedCellLockInput.EndUpdate();
+            _refreshingObservedCellLockProfiles = false;
+        }
+    }
+
+    private static string FormatObservedCellLockProfile(LteCellRecommendation item)
+    {
+        string pci = item.Pci == "-" ? "" : $", PCI {item.Pci}";
+        string cid = string.IsNullOrWhiteSpace(item.CellId) || item.CellId == "-"
+            ? ""
+            : $", CID {item.CellId}";
+        return $"{item.Band}, EARFCN {item.Earfcn}{pci}{cid}";
+    }
+
+    private void UseSelectedObservedCellLockProfile()
+    {
+        if (_refreshingObservedCellLockProfiles ||
+            _observedCellLockInput.SelectedItem is not ObservedCellLockOption
+            { Profile: { } profile })
+            return;
+
+        _manualBandsInput.Text = profile.Band;
+        _manualEarfcnInput.Text = profile.Earfcn;
+        _manualPciInput.Text = profile.Pci == "-" ? "" : profile.Pci;
+        _manualCidInput.Text = profile.CellId is null or "-" ? "" : profile.CellId;
+        _manualLockStatus.Text = profile.Pci == "-"
+            ? "Observed set loaded. Enter the PCI required by Cell Lock before applying."
+            : "Previously observed set loaded. Review it before saving or applying.";
+        _manualLockStatus.ForeColor = profile.Pci == "-"
+            ? Color.DarkGoldenrod
+            : Color.FromArgb(25, 82, 45);
+    }
 
     private void SaveManualCellProfile()
     {
@@ -3375,6 +3482,13 @@ internal sealed class MainForm : Form
     }
 
     private sealed record CellHistoryGroupRow(int PeriodId);
+
+    private sealed record ObservedCellLockOption(
+        string Label,
+        LteCellRecommendation? Profile)
+    {
+        public override string ToString() => Label;
+    }
     private sealed record CellHistoryScrollAnchor(
         int RowIndex,
         string? RecommendationKey,

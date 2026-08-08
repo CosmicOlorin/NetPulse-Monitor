@@ -25,6 +25,7 @@ internal sealed class TpLinkMr600Provider :
     private TpLinkCrypto? _crypto;
     private Uri? _routerUri;
     private string _password = "";
+    private bool _allowSessionTakeover;
     private string _tokenId = DefaultTokenId;
     private string _lteInterfaceStack = "1,0,0,0,0,0";
     private string _lteLinkStack = "1,1,0,0,0,0";
@@ -42,6 +43,7 @@ internal sealed class TpLinkMr600Provider :
         _routerUri = NormalizeRouterUri(options.RouterUri);
         await ValidateLocalAddressAsync(_routerUri, cancellationToken);
         _password = options.Password;
+        _allowSessionTakeover = options.AllowSessionTakeover;
         if (string.IsNullOrWhiteSpace(_password))
             throw new RouterAuthenticationException("Enter the TP-Link router password.");
 
@@ -62,7 +64,7 @@ internal sealed class TpLinkMr600Provider :
             MaxResponseContentBufferSize = 1024 * 1024
         };
         _client.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "NetPulseMonitor/1.0.4 (Windows; TP-Link local telemetry)");
+            "NetPulseMonitor/1.0.5 (Windows; TP-Link local telemetry)");
         _client.DefaultRequestHeaders.Referrer = _routerUri;
         // The MR600 login page sets this cookie in JavaScript. Non-browser
         // clients must set it explicitly or some firmware builds omit the
@@ -100,10 +102,10 @@ internal sealed class TpLinkMr600Provider :
         catch (RouterAuthenticationException)
         {
             _crypto = null;
-            // Another browser or Tether session may have replaced NetPulse. Check
-            // the management slot before reauthenticating so monitoring yields
-            // instead of immediately taking the session back.
-            await LoginAsync(allowSessionTakeover: false, cancellationToken);
+            // Live monitoring can be configured to own the MR600's single local
+            // management slot. Setup tests remain opt-in, while the monitor
+            // reconnects with its original takeover policy.
+            await LoginAsync(_allowSessionTakeover, cancellationToken);
             await DiscoverLteStacksAsync(cancellationToken);
             return await ReadTelemetryCoreAsync(cancellationToken);
         }
@@ -1166,6 +1168,7 @@ internal sealed class TpLinkMr600Provider :
         _client = null;
         _crypto = null;
         _password = "";
+        _allowSessionTakeover = false;
         _tokenId = DefaultTokenId;
         return Task.CompletedTask;
     }

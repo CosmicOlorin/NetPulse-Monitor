@@ -82,6 +82,12 @@ internal sealed class LteCellHistoryStore : IDisposable
         }
     }
 
+    public string? GetActiveProfileKey()
+    {
+        lock (_gate)
+            return _activeKey;
+    }
+
     public void RecordTelemetry(RouterTelemetry telemetry)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -241,6 +247,25 @@ internal sealed class LteCellHistoryStore : IDisposable
                 history.AddRange(BuildRecommendations(period, records));
             }
             return history;
+        }
+    }
+
+    public IReadOnlyList<LteCellRecommendation> GetObservedLockProfiles(
+        DateTime? localTime = null)
+    {
+        lock (_gate)
+        {
+            return BuildRecommendations(
+                    GetTimePeriod(localTime ?? DateTime.Now),
+                    _document.Records)
+                .Where(item => item.ConnectedTime >= MinimumVisiblePeriodTime)
+                .OrderByDescending(item => string.Equals(
+                    item.Key,
+                    _activeKey,
+                    StringComparison.Ordinal))
+                .ThenByDescending(item => item.LastSeenUtc)
+                .ThenByDescending(item => item.ConnectedTime)
+                .ToArray();
         }
     }
 

@@ -32,6 +32,10 @@ An unmeasured profile explicitly added in the Cell Lock tab remains visible as a
 manual entry. Automatic refreshes preserve the visible row and do not move the
 grid back to the top while the user is reading or scrolling.
 
+The current local-time group is always listed first. The profile that the router
+is using now is highlighted in green after it has accumulated the five minutes
+required to appear in the history.
+
 - **Rank**: recommendation order. Rank 1 is the preferred eligible profile.
 - **Period**: local-time bucket used for the current recommendation.
 - **Band**: LTE band profile, for example B3 or B3 + B20.
@@ -99,6 +103,11 @@ The **Cell Lock** tab accepts:
 - PCI;
 - optional CID.
 
+Its first field lists previously observed sets that have at least five connected
+minutes, with the currently active set first. Choosing one fills its band profile,
+primary EARFCN and any known PCI/CID into the manual fields for review. It never
+applies a lock automatically from this list.
+
 **Save profile to history** records only the supplied identity. It does not add
 fake connection time, speed tests or reliability results. **Save and apply
 lock...** requests confirmation, stores the current MR600 state, applies the
@@ -129,6 +138,14 @@ not send a test SMS automatically.
 ## Single MR600 management session
 
 The MR600 permits only one active management login. While NetPulse monitoring is
-running, it owns that session so one-second telemetry and SMS remain available.
-Exit NetPulse before signing into the router webpage. Normal application exit
-logs the router session out.
+running, it automatically takes and retains that session so one-second telemetry
+and SMS remain available, including after a browser or app has replaced the
+session. Exit NetPulse before signing into the router webpage. Normal application
+exit logs the router session out.
+
+## Window sizing
+
+NetPulse opens at a screen-relative size. The window can be reduced to a smaller
+screen-relative minimum (never below 920 x 640 logical pixels), while tabs and
+their main labels remain visible. Large data grids continue to use their own
+normal scrolling area.

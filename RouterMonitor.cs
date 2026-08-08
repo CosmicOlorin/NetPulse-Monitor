@@ -203,7 +203,8 @@ internal sealed class RouterMonitor : IDisposable
                             new RouterConnectionOptions
                             {
                                 RouterUri = uri,
-                                Password = _password
+                                Password = _password,
+                                AllowSessionTakeover = true
                             },
                             cancellationToken);
                     }
@@ -276,7 +277,7 @@ internal sealed class RouterMonitor : IDisposable
                 RaiseStateEvent(ref previousState, "busy", new MonitorEvent
                 {
                     Kind = "ROUTER",
-                    Message = "TP-Link web/app session has control; telemetry yielded"
+                    Message = "TP-Link management interface is busy; automatic takeover will retry"
                 });
                 await ResetProviderAsync();
                 await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);

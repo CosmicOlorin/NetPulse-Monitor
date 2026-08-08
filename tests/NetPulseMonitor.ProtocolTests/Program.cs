@@ -352,6 +352,25 @@ try
         "A replaced NetPulse session should not silently take control back.");
     managementSessionActive = false;
 
+    await using (var persistentTakeoverProvider = new TpLinkMr600Provider())
+    {
+        await persistentTakeoverProvider.ConnectAsync(
+            new RouterConnectionOptions
+            {
+                RouterUri = new Uri(address),
+                Password = "mock-password",
+                AllowSessionTakeover = true
+            },
+            timeout.Token);
+        managementSessionActive = true;
+        rejectNextStatusAsExpired = true;
+        RouterTelemetry recovered = await persistentTakeoverProvider.ReadAsync(
+            timeout.Token);
+        Require(recovered.IsConnected,
+            "A monitoring provider with session priority should retake a replaced session.");
+        managementSessionActive = false;
+    }
+
     bool publicAddressBlocked = false;
     try
     {
@@ -494,6 +513,21 @@ static void TestCellHistoryRanking()
             "The slowest eligible profile should rank last in this measured set.");
         Require(ranked.Single(item => item.Band == "B7").CellId is null,
             "CID should remain optional when the router does not report it.");
+        Require(history.GetActiveProfileKey() == ranked.Single(item =>
+                item.Band == "B7").Key,
+            "The history store should expose the currently used profile for highlighting.");
+        IReadOnlyList<LteCellRecommendation> observedLocks =
+            history.GetObservedLockProfiles();
+        Require(observedLocks.Count == 3 && observedLocks[0].Band == "B7",
+            "Cell Lock choices should show stable observed sets with the active set first.");
+
+        string shortHistoryPath = Path.Combine(testFolder, "short-history.json");
+        using (var shortHistory = new LteCellHistoryStore(shortHistoryPath))
+        {
+            RecordCell(shortHistory, started, "B20", "6300", "55", "333", 299);
+            Require(shortHistory.GetObservedLockProfiles().Count == 0,
+                "Cell Lock choices should hide sets observed for less than five minutes.");
+        }
 
         string bandOnlyHistoryPath = Path.Combine(testFolder, "band-only-history.json");
         using (var bandOnlyHistory = new LteCellHistoryStore(bandOnlyHistoryPath))

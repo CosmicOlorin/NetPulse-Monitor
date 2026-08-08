@@ -1,6 +1,6 @@
 # NetPulse Monitor
 
-NetPulse Monitor 1.0.4 is a native .NET 8 WinForms application for continuous
+NetPulse Monitor 1.0.5 is a native .NET 8 WinForms application for continuous
 Windows connection monitoring. It runs as a graphical Windows application and
 does not open a console window during normal use.
 
@@ -18,10 +18,10 @@ The standard router interface is useful for configuration, but it primarily
 presents a current snapshot. It does not build a long-term, time-aware record of
 which primary cell and band combinations are most reliable, and its automatic
 selection is not based on the user's measured disconnects and throughput history.
-NetPulse turns those observations into local evidence: confirmed outages first,
-download performance second and upload performance third. The goal is to give the
-user an understandable record, safer manual control and guarded automation while
-keeping every router change explicit and recoverable.
+NetPulse turns those observations into local evidence weighted as 50% download,
+40% confirmed disconnections and 10% upload. The goal is to give the user an
+understandable record, safer manual control and guarded automation while keeping
+every router change explicit and recoverable.
 
 NetPulse Monitor is an independent community project. It is not affiliated with,
 endorsed by or supported by TP-Link or any mobile/internet provider.
@@ -67,7 +67,7 @@ The **Connection details** tab has two independent selectors:
 General health, speed-test, gateway, DNS and Windows link values work without
 router credentials. LTE radio values are supplied by the MR600 provider.
 Attenuation, DSL SNR margin, sync rates, optical power and ONT status require a
-future compatible router/ONT provider; 1.0.4 labels these fields as requiring
+future compatible router/ONT provider; 1.0.5 labels these fields as requiring
 router or ONT data instead of inventing values.
 
 All tabs use fixed-fit DPI-aware layouts. Settings are arranged in two columns,
@@ -115,7 +115,8 @@ confidence only and does not add a hidden ranking bonus.
 Connections remain recorded internally but do not appear in LTE History until
 they reach five connected minutes in that time period. Automatic refreshes keep
 the currently visible row and scroll position instead of returning the grid to
-the top.
+the top. The current time-of-day group is always first, and the profile being
+used by the router is highlighted in green.
 
 Download and upload are scored relative to the fastest eligible profile in the
 same period. The reliability component is `100 / (1 + drops per hour)`, so zero
@@ -131,6 +132,9 @@ configurable and can be disabled without disabling these change-driven tests.
 
 Manual Cell Lock always asks for confirmation. Automatic locking is off by
 default, requires separate opt-in and only uses medium/high-confidence history.
+The Cell Lock tab starts with a list of previously observed five-minute band and
+EARFCN sets, ordered with the active set first, so known values can be reused
+without retyping them.
 It re-evaluates as the time period and results change, but uses a 30-minute
 minimum dwell, material-improvement hysteresis and at most six changes per day.
 Before every change NetPulse saves the existing band and cell state, validates
