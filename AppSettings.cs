@@ -30,6 +30,7 @@ internal sealed class AppSettings
     public RouterLockState? PendingCellLockRollback { get; set; }
     public string PendingCellLockTargetKey { get; set; } = "";
     public DateTime? PendingCellLockAppliedUtc { get; set; }
+    public Dictionary<string, string> SmsContacts { get; set; } = [];
 
     public static string SettingsFolder =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -89,6 +90,20 @@ internal sealed class AppSettings
         AutomaticCellLockChangesToday = Math.Clamp(
             AutomaticCellLockChangesToday, 0, AutomaticCellLockMaxChangesPerDay);
         CellLockValidationSeconds = Math.Clamp(CellLockValidationSeconds, 30, 300);
+        SmsContacts = (SmsContacts ?? [])
+            .Where(item =>
+                !string.IsNullOrWhiteSpace(item.Key) &&
+                !string.IsNullOrWhiteSpace(item.Value))
+            .Take(250)
+            .GroupBy(item => item.Key.Trim(), StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group =>
+                {
+                    string name = group.Last().Value.Trim();
+                    return name[..Math.Min(80, name.Length)];
+                },
+                StringComparer.Ordinal);
     }
 
     private static string NormalizeRouterAddress(string? value)

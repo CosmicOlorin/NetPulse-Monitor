@@ -145,10 +145,10 @@ internal sealed class RouterMonitor : IDisposable
             cancellationToken);
     }
 
-    public Task<IReadOnlyList<RouterSmsMessage>> ReadSmsInboxAsync(
+    public Task<IReadOnlyList<RouterSmsMessage>> ReadSmsTimelineAsync(
         CancellationToken cancellationToken = default) =>
         WithSmsProviderAsync(
-            provider => provider.ReadSmsInboxAsync(cancellationToken),
+            provider => provider.ReadSmsTimelineAsync(cancellationToken),
             cancellationToken);
 
     public async Task MarkSmsReadAsync(
@@ -173,6 +173,23 @@ internal sealed class RouterMonitor : IDisposable
             async provider =>
             {
                 await provider.SendSmsAsync(phoneNumber, content, cancellationToken);
+                return true;
+            },
+            cancellationToken);
+    }
+
+    public async Task SaveSmsDraftAsync(
+        string phoneNumber,
+        string content,
+        CancellationToken cancellationToken = default)
+    {
+        await WithSmsProviderAsync(
+            async provider =>
+            {
+                await provider.SaveSmsDraftAsync(
+                    phoneNumber,
+                    content,
+                    cancellationToken);
                 return true;
             },
             cancellationToken);

@@ -21,8 +21,9 @@ The provider requests an allowlisted set of read-only values:
 - total usage and current upload/download rates;
 - hardware and firmware versions.
 
-Telemetry requests are read-only. Reboot, SMS, SIM PIN, network selection,
-firmware, Wi-Fi and general router settings are not implemented.
+Telemetry requests are read-only. SMS is isolated behind explicit SMS actions;
+reboot, SIM PIN, network selection, firmware, Wi-Fi and general router settings
+are not implemented.
 
 ## LTE history and Cell Lock
 
@@ -33,9 +34,9 @@ are not counted as mobile disconnections. Speed-test results are attached only
 when the same cell remains active for the complete test.
 
 A ranked recommendation requires at least ten minutes of connected observation
-and one speed test. Confirmed disconnections per connected hour are compared
-first, average download speed second and average upload speed third. Medium or
-high confidence requires longer observation and multiple speed tests.
+and one speed test. Its normalized score is 50% average download, 40% confirmed
+disconnections per connected hour and 10% average upload. Medium or high
+confidence requires longer observation and multiple speed tests.
 
 Each cell also has four local-time periods: night (00–06), morning (06–12),
 afternoon (12–18) and evening (18–24). Current-period results are blended with
@@ -79,7 +80,9 @@ stability window; periodic tests are a separate setting.
 2. Redirects are disabled.
 3. NetPulse checks whether the router web interface already has an active user.
 4. Setup can replace an existing management session only after explicit user
-   confirmation, matching the MR600 web login's takeover behavior.
+   confirmation. It then mirrors the MR600 web login: a busy request gets a
+   short bounded wait, after which the takeover login proceeds even if the
+   firmware keeps its `isBusy` flag set.
 5. Login uses the firmware's AES-CBC and RSA signature exchange.
 6. The session cookie and token remain in memory for that provider instance.
 7. Telemetry object requests are serialized with a one-second refresh target.
@@ -111,17 +114,24 @@ and are never included in CSV or diagnostics.
 
 ## SMS operations
 
-The validated MR600 v5 firmware exposes the SIM inbox through
-`LTE_SMS_RECVMSGBOX` and `LTE_SMS_RECVMSGENTRY`. NetPulse pages through at most
-100 messages, marks only the opened entry with `unread=0`, and sends through
+The validated MR600 firmware family exposes Inbox, Sent and Draft folders through
+the corresponding `LTE_SMS_*MSGBOX` and `LTE_SMS_*MSGENTRY` objects. NetPulse
+pages through at most 100 entries per folder, merges dated messages newest-first,
+marks only an opened unread Inbox entry, and sends or saves drafts through
 `LTE_SMS_SENDNEWMSG` using the same serialized provider gate as telemetry.
 Sending is always initiated and confirmed by the user. `sendResult` is polled
 with a bounded timeout; busy and failure states are reported without an automatic
 retry that could duplicate a message.
 
 The unread notification count comes from `smsUnreadCount` in the existing
-`LTE_NET_STATUS` read. Message sender, recipient and content are not written to
-settings, diagnostics, events or CSV logs.
+`LTE_NET_STATUS` read. Draft objects do not expose a timestamp, so the UI labels
+their time as unavailable. Message content and router history are not written to
+settings, diagnostics, events or CSV logs. Explicitly saved contact names and
+normalized numbers remain only in local settings.
+
+The MR600 administration surface does not expose incoming voice-call events or a
+call log, so call notifications cannot be implemented reliably. Carrier-generated
+missed-call SMS messages continue to work as normal unread SMS.
 
 ## Remote access
 
@@ -137,6 +147,7 @@ user-managed VPN back to the router LAN is the recommended remote approach.
 - login AES/RSA compatibility and token propagation;
 - LTE stack discovery and allowlisted telemetry request construction;
 - telemetry parsing, LTE band mapping and 64-bit counters;
+- unified SMS Inbox/Sent/Drafts parsing, unread updates, sending and draft saving;
 - optional-CID Cell Lock construction and LTE band-mask encoding;
 - restoration of the original automatic-selection state;
 - LTE history filtering, time-period grouping and 50/40/10 weighted ranking;
@@ -151,6 +162,7 @@ No captured router traffic or proprietary firmware assets are committed.
 ## Official references
 
 - [Archer MR600 V1 administration guide](https://www.tp-link.com/us/user-guides/archer-mr600_v1/chapter-12-administrate-your-network)
+- [Archer MR600 SMS guide](https://www.tp-link.com/us/user-guides/archer-mr600_v1/chapter-8-sms)
 - [Archer MR600 V1 login FAQ](https://www.tp-link.com/us/user-guides/archer-mr600_v1/faq)
 - [TP-Link remote-management guidance](https://www.tp-link.com/us/support/faq/1553/)
 - [TP-Link Tether remote-management guidance](https://www.tp-link.com/us/support/faq/1971/)

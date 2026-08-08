@@ -65,6 +65,8 @@ internal sealed class MainForm : Form
     private readonly Label _smsLength = new();
     private readonly Button _smsRefreshButton = new();
     private readonly Button _smsReplyButton = new();
+    private readonly Button _smsDraftButton = new();
+    private readonly Button _smsContactButton = new();
     private readonly Button _smsSendButton = new();
 
     private readonly Label _gatewayValue = new();
@@ -262,7 +264,7 @@ internal sealed class MainForm : Form
         _tabs.SelectedIndexChanged += async (_, _) =>
         {
             if (_tabs.SelectedTab?.Text == "SMS")
-                await RefreshSmsInboxAsync(showErrors: false);
+                await RefreshSmsTimelineAsync(showErrors: false);
         };
 
         Controls.Add(_tabs);
@@ -937,9 +939,9 @@ internal sealed class MainForm : Form
         _smsGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
         _smsGrid.RowHeadersVisible = false;
         _smsGrid.BackgroundColor = Color.White;
-        _smsGrid.Columns.Add("SmsState", "Status");
-        _smsGrid.Columns.Add("SmsFrom", "From");
-        _smsGrid.Columns.Add("SmsReceived", "Received");
+        _smsGrid.Columns.Add("SmsState", "Folder / status");
+        _smsGrid.Columns.Add("SmsFrom", "Contact / number");
+        _smsGrid.Columns.Add("SmsReceived", "Time");
         _smsGrid.Columns.Add("SmsPreview", "Message");
         _smsGrid.Columns[0].FillWeight = 13;
         _smsGrid.Columns[1].FillWeight = 22;
@@ -964,8 +966,8 @@ internal sealed class MainForm : Form
         reader.RowStyles.Add(new RowStyle(SizeType.Percent, 58));
         reader.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
         reader.RowStyles.Add(new RowStyle(SizeType.Absolute, 1));
-        AddSmsReadLabel(reader, 0, "From", _smsSender);
-        AddSmsReadLabel(reader, 1, "Received", _smsReceived);
+        AddSmsReadLabel(reader, 0, "Contact", _smsSender);
+        AddSmsReadLabel(reader, 1, "Time", _smsReceived);
         _smsMessageView.Dock = DockStyle.Fill;
         _smsMessageView.Multiline = true;
         _smsMessageView.ReadOnly = true;
@@ -1009,20 +1011,29 @@ internal sealed class MainForm : Form
             WrapContents = false,
             Padding = new Padding(5, 10, 5, 4)
         };
-        _smsRefreshButton.Text = "Refresh inbox";
+        _smsRefreshButton.Text = "Refresh messages";
         _smsRefreshButton.Size = new Size(145, 40);
-        _smsRefreshButton.Click += async (_, _) => await RefreshSmsInboxAsync(showErrors: true);
+        _smsRefreshButton.Click += async (_, _) =>
+            await RefreshSmsTimelineAsync(showErrors: true);
         _smsReplyButton.Text = "Reply";
-        _smsReplyButton.Size = new Size(110, 40);
+        _smsReplyButton.Size = new Size(90, 40);
         _smsReplyButton.Click += (_, _) => ReplyToSelectedSms();
-        var newButton = new Button { Text = "New message", Size = new Size(140, 40) };
+        var newButton = new Button { Text = "New message", Size = new Size(125, 40) };
         newButton.Click += (_, _) => StartNewSms();
+        _smsDraftButton.Text = "Save draft";
+        _smsDraftButton.Size = new Size(115, 40);
+        _smsDraftButton.Click += async (_, _) => await SaveSmsDraftAsync();
+        _smsContactButton.Text = "Save contact...";
+        _smsContactButton.Size = new Size(135, 40);
+        _smsContactButton.Click += (_, _) => SaveSmsContact();
         _smsSendButton.Text = "Send SMS...";
-        _smsSendButton.Size = new Size(135, 40);
+        _smsSendButton.Size = new Size(120, 40);
         _smsSendButton.Click += async (_, _) => await SendSmsAsync();
         controls.Controls.Add(_smsRefreshButton);
         controls.Controls.Add(_smsReplyButton);
         controls.Controls.Add(newButton);
+        controls.Controls.Add(_smsDraftButton);
+        controls.Controls.Add(_smsContactButton);
         controls.Controls.Add(_smsSendButton);
 
         layout.Controls.Add(_smsStatus, 0, 0);
@@ -1083,8 +1094,7 @@ internal sealed class MainForm : Form
 
         var grid = new TableLayoutPanel
         {
-            Dock = DockStyle.Top,
-            Height = 300,
+            Dock = DockStyle.Fill,
             ColumnCount = 2,
             RowCount = 6,
             BackColor = Color.White,
@@ -1093,6 +1103,9 @@ internal sealed class MainForm : Form
 
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 35));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 65));
+        for (int row = 0; row < 5; row++)
+            grid.RowStyles.Add(new RowStyle(SizeType.Percent, 20));
+        grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
 
         AddDiagnosticRow(grid, 0, "Default gateway", _gatewayValue);
         AddDiagnosticRow(grid, 1, "Gateway latency", _gatewayPingValue);
@@ -1236,7 +1249,7 @@ internal sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = fieldRows + 1,
+            RowCount = fieldRows + 2,
             BackColor = Color.White,
             Margin = new Padding(5),
             Padding = new Padding(14, 10, 14, 10)
@@ -1245,7 +1258,8 @@ internal sealed class MainForm : Form
         section.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
         section.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         for (int row = 0; row < fieldRows; row++)
-            section.RowStyles.Add(new RowStyle(SizeType.Percent, 100F / fieldRows));
+            section.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
+        section.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         var title = new Label
         {
@@ -1363,8 +1377,10 @@ internal sealed class MainForm : Form
             TextAlign = ContentAlignment.MiddleLeft
         };
 
-        control.Dock = DockStyle.Fill;
-        control.Margin = new Padding(3, 7, 3, 7);
+        control.Dock = DockStyle.None;
+        control.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        control.MinimumSize = new Size(0, 30);
+        control.Margin = new Padding(3, 8, 3, 8);
 
         grid.Controls.Add(label, 0, row + 1);
         grid.Controls.Add(control, 1, row + 1);
@@ -1976,50 +1992,40 @@ internal sealed class MainForm : Form
         return true;
     }
 
-    private async Task RefreshSmsInboxAsync(bool showErrors)
+    private async Task RefreshSmsTimelineAsync(bool showErrors)
     {
         if (_smsBusy || IsDisposed)
             return;
-        SetSmsBusy(true, "Refreshing SIM inbox...");
+        SetSmsBusy(true, "Refreshing SIM messages...");
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
-            _smsMessages = await _routerMonitor.ReadSmsInboxAsync(timeout.Token);
-            string? selectedStack = _smsGrid.SelectedRows.Count > 0
-                ? (_smsGrid.SelectedRows[0].Tag as RouterSmsMessage)?.Stack
+            _smsMessages = await _routerMonitor.ReadSmsTimelineAsync(timeout.Token);
+            string? selectedIdentity = _smsGrid.SelectedRows.Count > 0
+                ? (_smsGrid.SelectedRows[0].Tag as RouterSmsMessage)?.Identity
                 : null;
-            _smsGrid.Rows.Clear();
-            foreach (RouterSmsMessage message in _smsMessages)
-            {
-                string preview = Regex.Replace(message.Content, @"\s+", " ").Trim();
-                if (preview.Length > 80)
-                    preview = preview[..77] + "...";
-                int index = _smsGrid.Rows.Add(
-                    message.IsUnread ? "Unread" : "Read",
-                    message.From,
-                    message.ReceivedTime,
-                    preview);
-                DataGridViewRow row = _smsGrid.Rows[index];
-                row.Tag = message;
-                if (message.IsUnread)
-                    row.DefaultCellStyle.Font = _smsUnreadFont;
-                if (message.Stack == selectedStack)
-                    row.Selected = true;
-            }
+            PopulateSmsGrid(selectedIdentity);
             int unread = _smsMessages.Count(message => message.IsUnread);
+            int inbox = _smsMessages.Count(message =>
+                message.Folder == RouterSmsFolder.Inbox);
+            int sent = _smsMessages.Count(message =>
+                message.Folder == RouterSmsFolder.Sent);
+            int drafts = _smsMessages.Count(message =>
+                message.Folder == RouterSmsFolder.Draft);
             _smsStatus.Text = _smsMessages.Count == 0
-                ? "SIM inbox is empty. Message content stays in memory and is never written to logs."
-                : $"{_smsMessages.Count} messages • {unread} unread • content is never written to logs.";
+                ? "No SIM messages. Content stays in memory and is never written to logs."
+                : $"{inbox} inbox • {sent} sent • {drafts} drafts • " +
+                  $"{unread} unread • newest dated messages first.";
             _smsStatus.ForeColor = unread > 0 ? Color.DarkGoldenrod : Color.DimGray;
         }
         catch (Exception ex)
         {
-            _smsStatus.Text = "SIM inbox unavailable: " + FriendlyUiError(ex);
+            _smsStatus.Text = "SIM messages unavailable: " + FriendlyUiError(ex);
             _smsStatus.ForeColor = Color.Firebrick;
             if (showErrors)
             {
                 MessageBox.Show(
-                    "The SIM inbox could not be refreshed.\r\n\r\n" + FriendlyUiError(ex),
+                    "SIM messages could not be refreshed.\r\n\r\n" + FriendlyUiError(ex),
                     "MR600 SMS",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
@@ -2031,16 +2037,59 @@ internal sealed class MainForm : Form
         }
     }
 
+    private void PopulateSmsGrid(string? selectedIdentity = null)
+    {
+        _smsGrid.Rows.Clear();
+        foreach (RouterSmsMessage message in _smsMessages)
+        {
+            string preview = Regex.Replace(message.Content, @"\s+", " ").Trim();
+            if (preview.Length > 80)
+                preview = preview[..77] + "...";
+            int index = _smsGrid.Rows.Add(
+                FormatSmsState(message),
+                FormatSmsContact(message.Address),
+                string.IsNullOrWhiteSpace(message.TimeText)
+                    ? "Time unavailable"
+                    : message.TimeText,
+                preview);
+            DataGridViewRow row = _smsGrid.Rows[index];
+            row.Tag = message;
+            if (message.IsUnread)
+                row.DefaultCellStyle.Font = _smsUnreadFont;
+            if (string.Equals(
+                    message.Identity,
+                    selectedIdentity,
+                    StringComparison.Ordinal))
+                row.Selected = true;
+        }
+    }
+
+    private static string FormatSmsState(RouterSmsMessage message) =>
+        message.Folder switch
+        {
+            RouterSmsFolder.Inbox when message.IsUnread => "Unread",
+            RouterSmsFolder.Inbox => "Inbox",
+            RouterSmsFolder.Sent => "Sent",
+            _ => "Draft"
+        };
+
     private async Task OpenSelectedSmsAsync()
     {
         if (_smsBusy || _smsGrid.SelectedRows.Count == 0 ||
             _smsGrid.SelectedRows[0].Tag is not RouterSmsMessage message)
             return;
-        _smsSender.Text = message.From;
-        _smsReceived.Text = message.ReceivedTime;
+        _smsSender.Text = FormatSmsContact(message.Address);
+        _smsReceived.Text = string.IsNullOrWhiteSpace(message.TimeText)
+            ? "Not provided by the MR600 for drafts"
+            : message.TimeText;
         _smsMessageView.Text = message.Content;
-        _smsReplyButton.Enabled = true;
-        if (!message.IsUnread)
+        _smsReplyButton.Enabled = message.Folder == RouterSmsFolder.Inbox;
+        if (message.Folder == RouterSmsFolder.Draft)
+        {
+            _smsRecipientInput.Text = message.Address;
+            _smsComposeInput.Text = message.Content;
+        }
+        if (message.Folder != RouterSmsFolder.Inbox || !message.IsUnread)
             return;
         try
         {
@@ -2048,7 +2097,7 @@ internal sealed class MainForm : Form
             await _routerMonitor.MarkSmsReadAsync(message.Stack, timeout.Token);
             message.IsUnread = false;
             DataGridViewRow row = _smsGrid.SelectedRows[0];
-            row.Cells["SmsState"].Value = "Read";
+            row.Cells["SmsState"].Value = "Inbox";
             row.DefaultCellStyle.Font = Font;
         }
         catch (Exception ex)
@@ -2062,13 +2111,14 @@ internal sealed class MainForm : Form
     private void ReplyToSelectedSms()
     {
         if (_smsGrid.SelectedRows.Count == 0 ||
-            _smsGrid.SelectedRows[0].Tag is not RouterSmsMessage message)
+            _smsGrid.SelectedRows[0].Tag is not RouterSmsMessage
+            { Folder: RouterSmsFolder.Inbox } message)
         {
             MessageBox.Show("Select an inbox message first.", "MR600 SMS",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        _smsRecipientInput.Text = message.From;
+        _smsRecipientInput.Text = message.Address;
         _smsComposeInput.Clear();
         _smsComposeInput.Focus();
     }
@@ -2084,37 +2134,17 @@ internal sealed class MainForm : Form
     {
         if (_smsBusy)
             return;
-        string recipient = _smsRecipientInput.Text.Trim();
-        string content = _smsComposeInput.Text;
-        if (!Regex.IsMatch(recipient, @"^\+?\d{1,20}$") || recipient.Length > 20)
-        {
-            MessageBox.Show(
-                "Phone number must contain 1 to 20 digits, with an optional leading +.",
-                "MR600 SMS",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Warning);
+        if (!TryReadSmsComposition(out string recipient, out string content))
             return;
-        }
-        (int used, int maximum) = TpLinkMr600Provider.MeasureSms(content);
-        if (string.IsNullOrWhiteSpace(content) || used > maximum)
-        {
-            MessageBox.Show(
-                string.IsNullOrWhiteSpace(content)
-                    ? "Enter an SMS message."
-                    : $"This message exceeds the MR600 {maximum}-character limit for its encoding.",
-                "MR600 SMS",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Warning);
-            return;
-        }
         if (MessageBox.Show(
-                $"Send this SMS to {recipient}?",
+                $"Send this SMS to {FormatSmsContact(recipient)}?",
                 "Send SMS",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question) != DialogResult.Yes)
             return;
 
         SetSmsBusy(true, "Sending SMS through the MR600...");
+        bool refresh = false;
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -2123,6 +2153,7 @@ internal sealed class MainForm : Form
             _smsComposeInput.Clear();
             _smsStatus.Text = "SMS sent successfully. No recipient or message content was logged.";
             _smsStatus.ForeColor = Color.FromArgb(25, 82, 45);
+            refresh = true;
         }
         catch (Exception ex)
         {
@@ -2138,6 +2169,200 @@ internal sealed class MainForm : Form
         {
             SetSmsBusy(false);
         }
+        if (refresh)
+            await RefreshSmsTimelineAsync(showErrors: false);
+    }
+
+    private async Task SaveSmsDraftAsync()
+    {
+        if (_smsBusy ||
+            !TryReadSmsComposition(out string recipient, out string content))
+            return;
+
+        SetSmsBusy(true, "Saving draft on the MR600...");
+        bool refresh = false;
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            await _routerMonitor.SaveSmsDraftAsync(recipient, content, timeout.Token);
+            _smsRecipientInput.Clear();
+            _smsComposeInput.Clear();
+            _smsStatus.Text = "Draft saved on the MR600.";
+            _smsStatus.ForeColor = Color.FromArgb(25, 82, 45);
+            refresh = true;
+        }
+        catch (Exception ex)
+        {
+            _smsStatus.Text = "Draft was not saved: " + FriendlyUiError(ex);
+            _smsStatus.ForeColor = Color.Firebrick;
+            MessageBox.Show(
+                "The draft was not saved.\r\n\r\n" + FriendlyUiError(ex),
+                "MR600 SMS",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            SetSmsBusy(false);
+        }
+        if (refresh)
+            await RefreshSmsTimelineAsync(showErrors: false);
+    }
+
+    private bool TryReadSmsComposition(out string recipient, out string content)
+    {
+        recipient = _smsRecipientInput.Text.Trim();
+        content = _smsComposeInput.Text;
+        if (!Regex.IsMatch(recipient, @"^\+?\d{1,20}$") || recipient.Length > 20)
+        {
+            MessageBox.Show(
+                "Phone number must contain 1 to 20 digits, with an optional leading +.",
+                "MR600 SMS",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return false;
+        }
+        (int used, int maximum) = TpLinkMr600Provider.MeasureSms(content);
+        if (string.IsNullOrWhiteSpace(content) || used > maximum)
+        {
+            MessageBox.Show(
+                string.IsNullOrWhiteSpace(content)
+                    ? "Enter an SMS message."
+                    : $"This message exceeds the MR600 {maximum}-character limit for its encoding.",
+                "MR600 SMS",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return false;
+        }
+        return true;
+    }
+
+    private string FormatSmsContact(string address)
+    {
+        string key = NormalizeSmsContactKey(address);
+        return _settings.SmsContacts.TryGetValue(key, out string? name)
+            ? $"{name} • {address}"
+            : address;
+    }
+
+    private static string NormalizeSmsContactKey(string address)
+    {
+        string trimmed = address.Trim();
+        string digits = Regex.Replace(trimmed, @"\D", "");
+        if (digits.StartsWith("00", StringComparison.Ordinal) && digits.Length > 2)
+            digits = digits[2..];
+        return digits.Length > 0 ? digits : trimmed.ToUpperInvariant();
+    }
+
+    private void SaveSmsContact()
+    {
+        RouterSmsMessage? selected = _smsGrid.SelectedRows.Count > 0
+            ? _smsGrid.SelectedRows[0].Tag as RouterSmsMessage
+            : null;
+        string address = selected?.Address ?? _smsRecipientInput.Text.Trim();
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            MessageBox.Show(
+                "Select a message or enter a phone number first.",
+                "SMS contact",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        string key = NormalizeSmsContactKey(address);
+        _settings.SmsContacts.TryGetValue(key, out string? existingName);
+        using var dialog = new Form
+        {
+            Text = "SMS contact name",
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            ClientSize = new Size(470, 165),
+            MaximizeBox = false,
+            MinimizeBox = false,
+            ShowInTaskbar = false,
+            Font = Font
+        };
+        var layout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 3,
+            Padding = new Padding(16)
+        };
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 105));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var nameInput = new TextBox
+        {
+            Text = existingName ?? "",
+            MaxLength = 80,
+            Anchor = AnchorStyles.Left | AnchorStyles.Right
+        };
+        layout.Controls.Add(new Label
+        {
+            Text = "Number",
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleLeft
+        }, 0, 0);
+        layout.Controls.Add(new Label
+        {
+            Text = address,
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleLeft,
+            AutoEllipsis = true
+        }, 1, 0);
+        layout.Controls.Add(new Label
+        {
+            Text = "Name",
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleLeft
+        }, 0, 1);
+        layout.Controls.Add(nameInput, 1, 1);
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.RightToLeft,
+            WrapContents = false
+        };
+        var save = new Button
+        {
+            Text = "Save",
+            DialogResult = DialogResult.OK,
+            Size = new Size(100, 34)
+        };
+        var cancel = new Button
+        {
+            Text = "Cancel",
+            DialogResult = DialogResult.Cancel,
+            Size = new Size(100, 34)
+        };
+        buttons.Controls.Add(save);
+        buttons.Controls.Add(cancel);
+        layout.Controls.Add(buttons, 0, 2);
+        layout.SetColumnSpan(buttons, 2);
+        dialog.Controls.Add(layout);
+        dialog.AcceptButton = save;
+        dialog.CancelButton = cancel;
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+            return;
+        string name = nameInput.Text.Trim();
+        if (name.Length == 0)
+            _settings.SmsContacts.Remove(key);
+        else
+            _settings.SmsContacts[key] = name;
+        _settings.Normalize();
+        _settings.Save();
+        string? selectedIdentity = selected?.Identity;
+        PopulateSmsGrid(selectedIdentity);
+        _smsSender.Text = FormatSmsContact(address);
+        _smsStatus.Text = name.Length == 0
+            ? "Saved contact name removed."
+            : $"Saved {name} for {address}.";
+        _smsStatus.ForeColor = Color.FromArgb(25, 82, 45);
     }
 
     private void RefreshSmsLength()
@@ -2152,7 +2377,12 @@ internal sealed class MainForm : Form
     {
         _smsBusy = busy;
         _smsRefreshButton.Enabled = !busy;
-        _smsReplyButton.Enabled = !busy && _smsGrid.SelectedRows.Count > 0;
+        _smsReplyButton.Enabled = !busy &&
+                                  _smsGrid.SelectedRows.Count > 0 &&
+                                  _smsGrid.SelectedRows[0].Tag is RouterSmsMessage
+                                  { Folder: RouterSmsFolder.Inbox };
+        _smsDraftButton.Enabled = !busy;
+        _smsContactButton.Enabled = !busy;
         _smsSendButton.Enabled = !busy;
         if (status is not null)
         {
@@ -3409,7 +3639,7 @@ internal sealed class MainForm : Form
                 ToolTipIcon.Info);
         }
         if (_tabs.SelectedTab?.Text == "SMS" && increased)
-            _ = RefreshSmsInboxAsync(showErrors: false);
+            _ = RefreshSmsTimelineAsync(showErrors: false);
     }
 
     private void ShowSmsTab()

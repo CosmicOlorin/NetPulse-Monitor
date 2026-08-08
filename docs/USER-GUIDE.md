@@ -121,9 +121,14 @@ The **SMS** tab uses the SIM installed in the MR600:
 
 - unread count is obtained with the regular one-second LTE status update;
 - Windows shows a notification when the unread count increases;
+- Inbox, Sent and Draft messages appear in one newest-first timeline;
+- drafts have **Time unavailable** because the MR600 does not expose a draft
+  timestamp;
 - selecting an unread message displays it and marks it read on the router;
 - **Reply** copies the sender into the recipient field;
 - **New message** clears the composer;
+- **Save draft** stores the current message in the router's Drafts folder;
+- **Save contact...** assigns or removes a local name for a phone number;
 - **Send SMS...** validates the number and encoding, asks for confirmation and
   sends through the MR600.
 
@@ -131,9 +136,16 @@ The firmware permits phone numbers of up to 20 characters including an optional
 leading `+`. Its maximum is 765 GSM-7 units or 335 Unicode characters. The
 composer displays the applicable limit.
 
-SMS sender, recipient and content remain in application memory only. They are
-never written to CSV files, diagnostics, settings or event logs. NetPulse does
-not send a test SMS automatically.
+SMS content and router message history remain in application memory only. They
+are never written to CSV files, diagnostics, settings or event logs. Contact
+names and normalized phone numbers are saved in the local settings file only
+when the user explicitly requests it. NetPulse does not send a test SMS
+automatically.
+
+The MR600 exposes SMS but no incoming voice-call event or call log. NetPulse
+therefore cannot reliably notify for calls made to the SIM. If the mobile
+provider sends a missed-call notification as an SMS, it appears normally in the
+timeline and triggers the unread-SMS notification.
 
 ## Single MR600 management session
 
@@ -149,3 +161,8 @@ NetPulse opens at a screen-relative size. The window can be reduced to a smaller
 screen-relative minimum (never below 920 x 640 logical pixels), while tabs and
 their main labels remain visible. Large data grids continue to use their own
 normal scrolling area.
+
+Settings controls use fixed-height, vertically centered rows so labels and
+inputs remain aligned on tall and high-DPI screens. Diagnostics uses five
+flexible result rows plus a dedicated button row, preventing overlap at the
+minimum window size.

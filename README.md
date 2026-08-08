@@ -42,7 +42,8 @@ endorsed by or supported by TP-Link or any mobile/internet provider.
 - Time-of-day learning with visible usage share and evidence weighting
 - Manual profile entry, Cell Lock and opt-in guarded automatic locking with rollback
 - Time-period-grouped LTE history with sortable columns and preserved PCell identity
-- MR600 SIM inbox, unread Windows notifications, read/reply and direct SMS sending
+- Unified MR600 Inbox/Sent/Drafts timeline, unread notifications and SMS sending
+- Local SMS contact names for saved phone numbers
 - Password-only TP-Link setup with Windows Credential Manager protection
 - Persistent connection-event, speed-test and masked router-telemetry CSV logs
 - Manual, scheduled and connection-change 20 MB download / 5 MB upload speed tests
@@ -70,11 +71,10 @@ Attenuation, DSL SNR margin, sync rates, optical power and ONT status require a
 future compatible router/ONT provider; 1.0.5 labels these fields as requiring
 router or ONT data instead of inventing values.
 
-All tabs use fixed-fit DPI-aware layouts. Settings are arranged in two columns,
-and the TP-Link setup actions stay visible without scroll bars at their supported
-window sizes. The initial and minimum application size are derived from the
-current Windows working area, preventing the window from being reduced below the
-layout size required to keep tab labels and controls visible.
+All tabs use fixed-fit DPI-aware layouts. Settings use vertically aligned rows in
+two columns, Diagnostics gives its button a dedicated row, and TP-Link actions
+stay visible without page-level scroll bars. Initial and minimum sizes are derived
+from the current Windows working area.
 
 ## TP-Link Archer MR600 setup
 
@@ -214,8 +214,10 @@ benchmarks. Results vary with provider location, routing, Wi-Fi and server load.
 - Cell IDs are masked in CSV logs.
 - Full cell IDs in LTE history remain only in the local settings folder and are
 used solely for the optional focused lock target.
-- SMS sender, recipient and message content remain in memory only and are never
-  written to settings, diagnostics, events or CSV logs.
+- SMS message content and router message history remain in memory only and are
+  never written to settings, diagnostics, events or CSV logs.
+- Contact names and normalized numbers are stored locally only when the user
+  explicitly selects **Save contact...**.
 - Router destinations are restricted to private LAN addresses.
 - Redirects away from the configured router are disabled.
 

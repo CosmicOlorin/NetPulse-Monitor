@@ -43,14 +43,24 @@ internal sealed class RouterTelemetry
     public string? Error { get; init; }
 }
 
+internal enum RouterSmsFolder
+{
+    Inbox,
+    Sent,
+    Draft
+}
+
 internal sealed class RouterSmsMessage
 {
     public required string Stack { get; init; }
     public required string Index { get; init; }
-    public required string From { get; init; }
+    public required string Address { get; init; }
     public required string Content { get; init; }
-    public required string ReceivedTime { get; init; }
+    public required string TimeText { get; init; }
+    public DateTime? Timestamp { get; init; }
+    public RouterSmsFolder Folder { get; init; }
     public bool IsUnread { get; set; }
+    public string Identity => $"{Folder}|{Stack}";
 }
 
 internal sealed class RouterCellLockTarget
@@ -100,12 +110,16 @@ internal interface IRouterCellLockProvider
 
 internal interface IRouterSmsProvider
 {
-    Task<IReadOnlyList<RouterSmsMessage>> ReadSmsInboxAsync(
+    Task<IReadOnlyList<RouterSmsMessage>> ReadSmsTimelineAsync(
         CancellationToken cancellationToken);
     Task MarkSmsReadAsync(
         string stack,
         CancellationToken cancellationToken);
     Task SendSmsAsync(
+        string phoneNumber,
+        string content,
+        CancellationToken cancellationToken);
+    Task SaveSmsDraftAsync(
         string phoneNumber,
         string content,
         CancellationToken cancellationToken);

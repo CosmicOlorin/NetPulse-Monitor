@@ -11,6 +11,10 @@
   any known PCI/CID when the user selects one.
 - The main window has a substantially smaller screen-relative minimum size while
   keeping navigation and primary labels visible.
+- Inbox, Sent and Draft SMS messages now share one newest-first timeline, with
+  draft saving and locally stored contact names.
+- Settings rows are vertically aligned, and Diagnostics no longer overlaps its
+  values and Run button at smaller window sizes or high DPI.
 
 ## Preserved behavior
 
@@ -20,3 +24,5 @@
 - Cell/band writes remain guarded, confirmed and rollback protected. Merely
   choosing an observed set never changes the router.
 - Router passwords, SMS content and credentials are never written to logs.
+- Voice-call notifications remain unavailable because the MR600 exposes no call
+  event or call log; carrier-generated missed-call SMS notifications still work.

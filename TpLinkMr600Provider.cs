@@ -211,14 +211,52 @@ internal sealed class TpLinkMr600Provider :
         await SendActionsAsync(actions, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<RouterSmsMessage>> ReadSmsInboxAsync(
+    public async Task<IReadOnlyList<RouterSmsMessage>> ReadSmsTimelineAsync(
         CancellationToken cancellationToken)
     {
         EnsureConnected();
+        var messages = new List<RouterSmsMessage>();
+        messages.AddRange(await ReadSmsFolderAsync(
+            "LTE_SMS_RECVMSGBOX",
+            "LTE_SMS_RECVMSGENTRY",
+            RouterSmsFolder.Inbox,
+            "from",
+            "receivedTime",
+            cancellationToken));
+        messages.AddRange(await ReadSmsFolderAsync(
+            "LTE_SMS_SENDMSGBOX",
+            "LTE_SMS_SENDMSGENTRY",
+            RouterSmsFolder.Sent,
+            "to",
+            "sendTime",
+            cancellationToken));
+        messages.AddRange(await ReadSmsFolderAsync(
+            "LTE_SMS_DRAFTMSGBOX",
+            "LTE_SMS_DRAFTMSGENTRY",
+            RouterSmsFolder.Draft,
+            "to",
+            null,
+            cancellationToken));
+
+        return messages
+            .OrderByDescending(message => message.Timestamp.HasValue)
+            .ThenByDescending(message => message.Timestamp)
+            .ThenBy(message => message.Folder)
+            .ToArray();
+    }
+
+    private async Task<IReadOnlyList<RouterSmsMessage>> ReadSmsFolderAsync(
+        string boxObject,
+        string entryObject,
+        RouterSmsFolder folder,
+        string addressField,
+        string? timeField,
+        CancellationToken cancellationToken)
+    {
         await SendActionsAsync(
             [new RouterAction(
                 2,
-                "LTE_SMS_RECVMSGBOX",
+                boxObject,
                 ZeroStack,
                 ZeroStack,
                 ["PageNumber=0"])],
@@ -227,7 +265,7 @@ internal sealed class TpLinkMr600Provider :
         CgiResponse boxResponse = await SendActionsAsync(
             [new RouterAction(
                 1,
-                "LTE_SMS_RECVMSGBOX",
+                boxObject,
                 ZeroStack,
                 ZeroStack,
                 ["totalNumber", "amountPerPage"])],
@@ -245,32 +283,46 @@ internal sealed class TpLinkMr600Provider :
             await SendActionsAsync(
                 [new RouterAction(
                     2,
-                    "LTE_SMS_RECVMSGBOX",
+                    boxObject,
                     ZeroStack,
                     ZeroStack,
                     ["PageNumber=" + page.ToString(CultureInfo.InvariantCulture)])],
                 cancellationToken);
+            string[] fields = folder switch
+            {
+                RouterSmsFolder.Inbox =>
+                    ["index", addressField, "content", timeField!, "unread"],
+                RouterSmsFolder.Sent =>
+                    ["index", addressField, "content", timeField!],
+                _ => ["index", addressField, "content"]
+            };
             CgiResponse pageResponse = await SendActionsAsync(
                 [new RouterAction(
                     5,
-                    "LTE_SMS_RECVMSGENTRY",
+                    entryObject,
                     ZeroStack,
                     ZeroStack,
-                    ["index", "from", "content", "receivedTime", "unread"])],
+                    fields)],
                 cancellationToken);
 
             foreach (CgiObject item in pageResponse.GetObjects(0))
             {
                 if (!IsStack(item.Stack))
                     continue;
+                string timeText = timeField is null
+                    ? ""
+                    : item.Get(timeField)?.Trim() ?? "";
                 messages.Add(new RouterSmsMessage
                 {
                     Stack = item.Stack,
                     Index = item.Get("index")?.Trim() ?? "",
-                    From = item.Get("from")?.Trim() ?? "",
+                    Address = item.Get(addressField)?.Trim() ?? "",
                     Content = DecodeSmsContent(item.Get("content") ?? ""),
-                    ReceivedTime = item.Get("receivedTime")?.Trim() ?? "",
-                    IsUnread = ParseInt(item.Get("unread")) == 1
+                    TimeText = timeText,
+                    Timestamp = ParseSmsTimestamp(timeText),
+                    Folder = folder,
+                    IsUnread = folder == RouterSmsFolder.Inbox &&
+                               ParseInt(item.Get("unread")) == 1
                 });
                 if (messages.Count >= total)
                     break;
@@ -338,6 +390,28 @@ internal sealed class TpLinkMr600Provider :
                 throw new RouterConnectionException(
                     "The MR600 could not send the SMS.");
         }
+    }
+
+    public async Task SaveSmsDraftAsync(
+        string phoneNumber,
+        string content,
+        CancellationToken cancellationToken)
+    {
+        EnsureConnected();
+        string recipient = phoneNumber.Trim();
+        ValidateSms(recipient, content);
+        await SendActionsAsync(
+            [new RouterAction(
+                2,
+                "LTE_SMS_SENDNEWMSG",
+                ZeroStack,
+                ZeroStack,
+                [
+                    "index=2",
+                    "to=" + recipient,
+                    "textContent=" + EncodeSmsContent(content)
+                ])],
+            cancellationToken);
     }
 
     public async Task DisconnectAsync(CancellationToken cancellationToken)
@@ -427,7 +501,12 @@ internal sealed class TpLinkMr600Provider :
             }
         }
 
-        if (busy.IsBusy)
+        // The MR600 web UI polls a busy management session three times and,
+        // after explicit takeover confirmation, submits the login even when
+        // isBusy has not cleared. Mirror that behavior: otherwise a browser
+        // performing background requests can keep NetPulse locked out even
+        // though the user allowed session takeover.
+        if (busy.IsBusy && !allowSessionTakeover)
             throw new RouterBusyException(
                 "The MR600 is processing another management request. " +
                 "Wait a few seconds, then try again.");
@@ -1006,6 +1085,24 @@ internal sealed class TpLinkMr600Provider :
     private static double? ParseDouble(string? value) =>
         double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture,
             out double result) ? result : null;
+
+    private static DateTime? ParseSmsTimestamp(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        if (DateTime.TryParse(
+                value,
+                CultureInfo.CurrentCulture,
+                DateTimeStyles.AllowWhiteSpaces,
+                out DateTime local) ||
+            DateTime.TryParse(
+                value,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AllowWhiteSpaces,
+                out local))
+            return local;
+        return null;
+    }
 
     private static string FirstRadioValue(params string?[] values) =>
         values.Select(value => value?.Trim())

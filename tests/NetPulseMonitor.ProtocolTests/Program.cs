@@ -18,6 +18,7 @@ string? aesKey = null;
 string? aesIv = null;
 int statusRequests = 0;
 bool managementSessionActive = false;
+bool managementSessionBusy = false;
 bool rejectNextStatusAsExpired = false;
 var writeRequests = new List<string>();
 var logoutRequests = new List<string>();
@@ -31,7 +32,7 @@ WebApplication app = builder.Build();
 app.MapPost("/cgi/getBusy", () => Results.Json(new
 {
     isLogined = managementSessionActive ? 1 : 0,
-    isBusy = 0
+    isBusy = managementSessionBusy ? 1 : 0
 }));
 app.MapPost("/cgi/getParm", () => Results.Text(
     $"nn=\"{modulus}\"; ee=\"{exponent}\"; seq=\"1000\"; userSetting=0;"));
@@ -81,6 +82,36 @@ app.MapPost("/cgi_gdpr", async (HttpRequest request) =>
         smsRequests.Add(plainRequest);
         plainResponse = plainRequest.Contains("sendResult", StringComparison.Ordinal)
             ? "[0,0,0,0,0,0]0\r\nsendResult=1\r\n"
+            : "[0,0,0,0,0,0]0\r\n";
+    }
+    else if (plainRequest.Contains("LTE_SMS_SENDMSGENTRY", StringComparison.Ordinal))
+    {
+        smsRequests.Add(plainRequest);
+        plainResponse = plainRequest.StartsWith("5\r\n", StringComparison.Ordinal)
+            ? "[1,0,0,0,0,0]0\r\nindex=3\r\nto=+303333333333\r\n" +
+              "content=Sent message\r\nsendTime=2026-08-08 08:02:00\r\n"
+            : "[1,0,0,0,0,0]0\r\n";
+    }
+    else if (plainRequest.Contains("LTE_SMS_SENDMSGBOX", StringComparison.Ordinal))
+    {
+        smsRequests.Add(plainRequest);
+        plainResponse = plainRequest.Contains("totalNumber", StringComparison.Ordinal)
+            ? "[0,0,0,0,0,0]0\r\ntotalNumber=1\r\namountPerPage=8\r\n"
+            : "[0,0,0,0,0,0]0\r\n";
+    }
+    else if (plainRequest.Contains("LTE_SMS_DRAFTMSGENTRY", StringComparison.Ordinal))
+    {
+        smsRequests.Add(plainRequest);
+        plainResponse = plainRequest.StartsWith("5\r\n", StringComparison.Ordinal)
+            ? "[1,0,0,0,0,0]0\r\nindex=4\r\nto=+304444444444\r\n" +
+              "content=Draft message\r\n"
+            : "[1,0,0,0,0,0]0\r\n";
+    }
+    else if (plainRequest.Contains("LTE_SMS_DRAFTMSGBOX", StringComparison.Ordinal))
+    {
+        smsRequests.Add(plainRequest);
+        plainResponse = plainRequest.Contains("totalNumber", StringComparison.Ordinal)
+            ? "[0,0,0,0,0,0]0\r\ntotalNumber=1\r\namountPerPage=8\r\n"
             : "[0,0,0,0,0,0]0\r\n";
     }
     else if (plainRequest.Contains("LTE_SMS_RECVMSGENTRY", StringComparison.Ordinal))
@@ -183,11 +214,16 @@ try
     Require(telemetry.TotalBytes == 2147483648L, "64-bit data usage was not parsed.");
     Require(statusRequests >= 2, "Expected status reads were not sent.");
 
-    IReadOnlyList<RouterSmsMessage> inbox =
-        await provider.ReadSmsInboxAsync(timeout.Token);
-    Require(inbox.Count == 2 && inbox[0].IsUnread && !inbox[1].IsUnread,
-        "The MR600 inbox and unread state were not parsed.");
-    await provider.MarkSmsReadAsync(inbox[0].Stack, timeout.Token);
+    IReadOnlyList<RouterSmsMessage> timeline =
+        await provider.ReadSmsTimelineAsync(timeout.Token);
+    Require(timeline.Count == 4 &&
+            timeline[0].Folder == RouterSmsFolder.Sent &&
+            timeline[1].Folder == RouterSmsFolder.Inbox &&
+            timeline[2].Folder == RouterSmsFolder.Inbox &&
+            timeline[3].Folder == RouterSmsFolder.Draft,
+        "Inbox, sent messages and drafts should share one chronological timeline.");
+    RouterSmsMessage unreadMessage = timeline.Single(message => message.IsUnread);
+    await provider.MarkSmsReadAsync(unreadMessage.Stack, timeout.Token);
     Require(smsRequests.Any(item =>
             item.Contains("LTE_SMS_RECVMSGENTRY", StringComparison.Ordinal) &&
             item.Contains("unread=0", StringComparison.Ordinal)),
@@ -202,6 +238,15 @@ try
             item.Contains("textContent=Mock line 1\u0011\u0012Mock line 2",
                 StringComparison.Ordinal)),
         "SMS send fields and MR600 newline encoding were not generated correctly.");
+    await provider.SaveSmsDraftAsync(
+        "+301234567890",
+        "Unsent draft",
+        timeout.Token);
+    Require(smsRequests.Any(item =>
+            item.Contains("LTE_SMS_SENDNEWMSG", StringComparison.Ordinal) &&
+            item.Contains("index=2", StringComparison.Ordinal) &&
+            item.Contains("textContent=Unsent draft", StringComparison.Ordinal)),
+        "Saving a draft should use the MR600 draft index without sending it.");
 
     RouterLockState originalLock = await provider.ReadLockStateAsync(timeout.Token);
     Require(!originalLock.CellLockEnabled && !originalLock.BandSelectionEnabled,
@@ -336,6 +381,24 @@ try
             logoutRequests.Any(item =>
                 item.Contains("/cgi/logout", StringComparison.Ordinal)),
         "MR600 encrypted clearBusy/logout sequence was not sent.");
+
+    managementSessionActive = true;
+    managementSessionBusy = true;
+    await using (var busyTakeoverProvider = new TpLinkMr600Provider())
+    {
+        RouterCapabilities busyTakeoverCapabilities =
+            await busyTakeoverProvider.ConnectAsync(
+                new RouterConnectionOptions
+                {
+                    RouterUri = new Uri(address),
+                    Password = "mock-password",
+                    AllowSessionTakeover = true
+                },
+                timeout.Token);
+        Require(busyTakeoverCapabilities.SupportsLteTelemetry,
+            "Explicit takeover did not proceed after the bounded busy wait.");
+    }
+    managementSessionBusy = false;
 
     managementSessionActive = true;
     rejectNextStatusAsExpired = true;
