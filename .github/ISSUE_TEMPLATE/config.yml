@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Private security report
+    url: https://github.com/CosmicOlorin/NetPulse-Monitor/security/advisories/new
+    about: Report vulnerabilities privately; never place sensitive data in a public issue.

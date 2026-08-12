@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest a focused improvement to NetPulse Monitor.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include router credentials, SMS content, phone numbers or other private data.
+  - type: textarea
+    id: need
+    attributes:
+      label: User need
+      description: Describe the problem or workflow, not only the proposed control.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+    validations:
+      required: true
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Router impact
+      options:
+        - Read-only monitoring
+        - Explicit router change
+        - No router interaction
+        - Unsure
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
