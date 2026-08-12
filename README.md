@@ -43,8 +43,6 @@ endorsed by or supported by TP-Link or any mobile/internet provider.
 - Current ping, jitter, rolling packet loss, successes and failures
 - Confirmed outage detection, recovery events, uptime, downtime and availability
 - Switchable access profiles: Mobile/LTE, ADSL/VDSL and FTTB/FTTH
-- Independent PC-link selection: auto-detect, Wi-Fi or Ethernet
-- Active Windows adapter type and negotiated link speed
 - Optional capability-based TP-Link router integration, with live LTE telemetry,
   Cell Lock and SIM SMS where the router firmware exposes compatible local APIs
 - LTE signal, RSRP, RSRQ, SNR, PCell/SCell bands, primary EARFCN, SIM, usage and rates
@@ -113,10 +111,10 @@ restoration rather than abandoning an active scan.
 
 ## Access profiles
 
-The **Connection details** tab has two independent selectors:
-
-1. **Access**: Mobile/LTE, ADSL/VDSL or FTTB/FTTH.
-2. **PC link**: Auto detect, Wi-Fi or Ethernet.
+The **Connection details** tab provides an **Access** selector for Mobile/LTE,
+ADSL/VDSL or FTTB/FTTH. NetPulse does not expose separate Wi-Fi or Ethernet
+profiles because its Internet and LTE monitoring results do not depend on that
+choice.
 
 General health, speed-test, gateway, DNS and Windows link values work without
 router credentials. LTE radio values are supplied by the MR600 provider.
@@ -326,7 +324,7 @@ different hosts. Connection, discovery and transfer stages have bounded timeouts
 the complete run has a 180-second limit, and the UI can cancel the operation.
 
 These measurements are operational estimates rather than certified line-rate
-benchmarks. Results vary with provider location, routing, Wi-Fi and server load.
+benchmarks. Results vary with provider location, routing and server load.
 
 ## Privacy and router-change safety
 
@@ -334,7 +332,7 @@ benchmarks. Results vary with provider location, routing, Wi-Fi and server load.
 - Telemetry polling never changes router configuration.
 - Cell/band changes require manual confirmation or explicit automatic-lock opt-in.
 - The previous router state is retained locally only while rollback is pending.
-- IMEI, MAC, DNS and Wi-Fi identifiers are not requested from the MR600.
+- IMEI, MAC and DNS identifiers are not requested from the MR600.
 - Router telemetry CSV and local LTE history retain full cell identifiers because
   they are required to correlate antenna performance, outages and focused locks.
 - An ISP evidence ZIP intentionally includes the current public/local IP details,
@@ -357,7 +355,6 @@ benchmarks. Results vary with provider location, routing, Wi-Fi and server load.
 - `LteCellHistoryStore.cs` — local LTE history and ranked recommendations
 - `SpeedTestEngine.cs` — provider selection, timeouts and measurements
 - `NetworkDiagnostics.cs` — gateway, DNS and IP diagnostics
-- `LocalNetworkInfo.cs` — active Wi-Fi/Ethernet adapter and link speed
 - `CsvLogger.cs` — durable privacy-filtered CSV output
 - `AutoFitLabel.cs` — DPI-aware metric text fitting
 - `ExperienceServices.cs` — health, troubleshooting, conversations, timeline and experiment ranking

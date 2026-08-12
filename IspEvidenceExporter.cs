@@ -17,7 +17,6 @@ internal static class IspEvidenceExporter
     public static string Export(
         CsvLogger logger,
         string accessTechnology,
-        string localLink,
         MonitorSnapshot monitor,
         RouterTelemetry router,
         DiagnosticResult? diagnostics,
@@ -44,7 +43,6 @@ internal static class IspEvidenceExporter
                 Path.Combine(staging, "ISP-Evidence-Summary.txt"),
                 BuildSummary(
                     accessTechnology,
-                    localLink,
                     monitor,
                     router,
                     diagnostics,
@@ -121,7 +119,6 @@ internal static class IspEvidenceExporter
 
     private static string BuildSummary(
         string accessTechnology,
-        string localLink,
         MonitorSnapshot monitor,
         RouterTelemetry router,
         DiagnosticResult? diagnostics,
@@ -139,7 +136,6 @@ internal static class IspEvidenceExporter
             "",
             "CONNECTION PROFILE",
             $"Access technology: {accessTechnology}",
-            $"Local link: {localLink}",
             "",
             "CURRENT MONITORING SESSION",
             $"Status: {(monitor.IsOnline ? "Online" : "Offline")}",

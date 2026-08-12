@@ -21,7 +21,8 @@ internal sealed class RouterSetupForm : Form
     public RouterSetupForm(
         AppSettings settings,
         string? currentPassword,
-        bool firstRun)
+        bool firstRun,
+        NetPulseTheme theme)
     {
         _firstRun = firstRun;
         Text = firstRun
@@ -190,6 +191,7 @@ internal sealed class RouterSetupForm : Form
 
         _enabled.CheckedChanged += (_, _) => UpdateEnabledState();
         UpdateEnabledState();
+        AppThemeManager.Apply(this, theme);
     }
 
     private static void AddRow(

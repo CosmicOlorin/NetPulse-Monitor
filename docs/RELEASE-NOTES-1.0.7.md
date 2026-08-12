@@ -19,6 +19,9 @@
   Advanced dashboard retains the complete four-by-three view.
 - The Updates card and Settings show the application version in concise,
   user-facing language.
+- Removed the Wi-Fi/Ethernet PC-link selector and related report field because
+  they do not affect NetPulse Internet or LTE monitoring. The released space now
+  shows outage count and total downtime instead.
 
 ## LTE history and SMS
 

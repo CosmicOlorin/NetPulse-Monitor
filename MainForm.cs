@@ -59,7 +59,6 @@ internal sealed class MainForm : Form
     private readonly AutoFitLabel _routerConnectionState = new();
     private readonly Label _routerDetails = new();
     private readonly ComboBox _connectionViewInput = new();
-    private readonly ComboBox _localLinkInput = new();
     private readonly ComboBox _observedCellLockInput = new();
     private readonly CueTextBox _manualBandsInput = new();
     private readonly CueTextBox _manualEarfcnInput = new();
@@ -765,26 +764,18 @@ internal sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 2,
+            RowCount = 1,
             Padding = new Padding(8, 0, 0, 0)
         };
         selectors.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));
         selectors.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        selectors.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-        selectors.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        selectors.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         var accessLabel = new Label
         {
             Text = "Access",
             Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft
         };
-        var localLinkLabel = new Label
-        {
-            Text = "PC link",
-            Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.MiddleLeft
-        };
-
         _connectionViewInput.DropDownStyle = ComboBoxStyle.DropDownList;
         _connectionViewInput.Dock = DockStyle.Fill;
         _connectionViewInput.Items.AddRange(
@@ -804,27 +795,8 @@ internal sealed class MainForm : Form
             RefreshRouterDashboard(_routerMonitor.GetSnapshot());
         };
 
-        _localLinkInput.DropDownStyle = ComboBoxStyle.DropDownList;
-        _localLinkInput.Dock = DockStyle.Fill;
-        _localLinkInput.Items.AddRange(["Auto detect", "Wi-Fi", "Ethernet"]);
-        _localLinkInput.SelectedIndexChanged += (_, _) =>
-        {
-            if (_localLinkInput.SelectedIndex < 0)
-                return;
-            _settings.LocalLinkView = _localLinkInput.SelectedIndex switch
-            {
-                1 => "Wifi",
-                2 => "Ethernet",
-                _ => "Auto"
-            };
-            if (IsHandleCreated)
-                _settings.Save();
-            RefreshRouterDashboard(_routerMonitor.GetSnapshot());
-        };
         selectors.Controls.Add(accessLabel, 0, 0);
         selectors.Controls.Add(_connectionViewInput, 1, 0);
-        selectors.Controls.Add(localLinkLabel, 0, 1);
-        selectors.Controls.Add(_localLinkInput, 1, 1);
         statusPanel.Controls.Add(selectors, 2, 0);
 
         var metricGrid = new TableLayoutPanel
@@ -1706,18 +1678,11 @@ internal sealed class MainForm : Form
                 MonitorSnapshot monitor = _engine.GetSnapshot();
                 RouterTelemetry router = _routerMonitor.GetSnapshot();
                 string accessTechnology = GetAccessTechnologyLabel();
-                string localLink = _settings.LocalLinkView switch
-                {
-                    "Wifi" => "Wi-Fi",
-                    "Ethernet" => "Ethernet",
-                    _ => LocalNetworkInfo.ReadActiveLink().Kind
-                };
                 IReadOnlyList<LteCellRecommendation> lteHistory =
                     _cellHistory.GetHistoryRecommendations();
                 string path = await Task.Run(() => IspEvidenceExporter.Export(
                     _logger,
                     accessTechnology,
-                    localLink,
                     monitor,
                     router,
                     _lastDiagnosticResult,
@@ -4749,14 +4714,6 @@ internal sealed class MainForm : Form
         MonitorSnapshot snapshot = _engine.GetSnapshot();
         string access = GetAccessTechnologyLabel();
         bool dsl = _settings.ConnectionDetailsView == "Dsl";
-        LocalLinkInfo detectedLink = LocalNetworkInfo.ReadActiveLink();
-        string selectedLink = _settings.LocalLinkView switch
-        {
-            "Wifi" => "Wi-Fi",
-            "Ethernet" => "Ethernet",
-            _ => detectedLink.Kind
-        };
-
         if (dsl)
         {
             SetConnectionMetricCaptions(
@@ -4767,7 +4724,7 @@ internal sealed class MainForm : Form
                 ("Pci", "DOWNSTREAM ATTENUATION"), ("Cell", "UPSTREAM ATTENUATION"),
                 ("Earfcn", "DOWNSTREAM SNR MARGIN"), ("Sim", "UPSTREAM SNR MARGIN"),
                 ("Data", "DEFAULT GATEWAY"), ("RouterUpload", "DNS LATENCY"),
-                ("RouterDownload", "PC LINK"), ("Updated", "NEGOTIATED LINK SPEED"));
+                ("RouterDownload", "OUTAGES"), ("Updated", "TOTAL DOWNTIME"));
         }
         else
         {
@@ -4781,7 +4738,7 @@ internal sealed class MainForm : Form
                 ("Earfcn", "ONT / MDU STATUS"),
                 ("Sim", "ACCESS LINK RATE"),
                 ("Data", "DEFAULT GATEWAY"), ("RouterUpload", "DNS LATENCY"),
-                ("RouterDownload", "PC LINK"), ("Updated", "NEGOTIATED LINK SPEED"));
+                ("RouterDownload", "OUTAGES"), ("Updated", "TOTAL DOWNTIME"));
         }
 
         string status = snapshot.IsPaused
@@ -4792,9 +4749,7 @@ internal sealed class MainForm : Form
             ? Color.DarkOrange
             : snapshot.IsOnline ? Color.SeaGreen : Color.Firebrick;
         _routerDetails.Text =
-            $"{access} access • {selectedLink} PC link" +
-            (detectedLink.AdapterName == "-" ? "" : $" • {detectedLink.AdapterName}") +
-            ". Line values require a compatible router or ONT provider.";
+            $"{access} internet monitoring. Line values require a compatible router or ONT provider.";
 
         _routerMetrics["Status"].Text = status;
         _routerMetrics["Isp"].Text = access;
@@ -4823,8 +4778,8 @@ internal sealed class MainForm : Form
             : "ONT data required";
         _routerMetrics["Data"].Text = DisplayValue(_gatewayValue.Text);
         _routerMetrics["RouterUpload"].Text = DisplayValue(_dnsValue.Text);
-        _routerMetrics["RouterDownload"].Text = selectedLink;
-        _routerMetrics["Updated"].Text = FormatLinkSpeed(detectedLink.SpeedBitsPerSecond);
+        _routerMetrics["RouterDownload"].Text = snapshot.Outages.ToString(CultureInfo.CurrentCulture);
+        _routerMetrics["Updated"].Text = FormatDuration(snapshot.TotalDowntime);
     }
 
     private bool IsLteConnectionView() =>
@@ -5654,12 +5609,6 @@ internal sealed class MainForm : Form
             "Fiber" => 2,
             _ => 0
         };
-        _localLinkInput.SelectedIndex = _settings.LocalLinkView switch
-        {
-            "Wifi" => 1,
-            "Ethernet" => 2,
-            _ => 0
-        };
         ApplyAppearanceSettings();
     }
 
@@ -5685,6 +5634,14 @@ internal sealed class MainForm : Form
                 : NetPulseTheme.System;
         return AppThemeManager.IsDark(theme);
     }
+
+    private NetPulseTheme CurrentTheme() => Enum.TryParse(
+            _themeInput.SelectedItem?.ToString(),
+            out NetPulseTheme selected)
+        ? selected
+        : Enum.TryParse(_settings.Theme, out NetPulseTheme saved)
+            ? saved
+            : NetPulseTheme.System;
 
     private void RefreshThemeDependentContent()
     {
@@ -5962,7 +5919,7 @@ internal sealed class MainForm : Form
 
     private void ConfigureRegionalSettings(bool firstRun)
     {
-        using var dialog = new RegionalSetupForm(_settings, firstRun);
+        using var dialog = new RegionalSetupForm(_settings, firstRun, CurrentTheme());
         if (dialog.ShowDialog(this) != DialogResult.OK)
             return;
 
@@ -6016,7 +5973,8 @@ internal sealed class MainForm : Form
             Error = "Live telemetry is paused while the TP-Link connection is tested."
         });
 
-        using var dialog = new RouterSetupForm(_settings, _routerPassword, firstRun);
+        using var dialog = new RouterSetupForm(
+            _settings, _routerPassword, firstRun, CurrentTheme());
         DialogResult result = dialog.ShowDialog(this);
         if (result != DialogResult.OK)
         {

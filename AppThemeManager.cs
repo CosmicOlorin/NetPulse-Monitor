@@ -35,11 +35,25 @@ internal static class AppThemeManager
         Color muted = dark ? Color.FromArgb(168, 177, 188) : Color.DimGray;
         ApplyRecursive(root, background, surface, text, muted, dark);
         if (root is Form form)
+        {
+            form.Tag = theme;
+            ApplyWindowFrame(form, theme);
+            form.Shown -= ReapplyWindowFrame;
+            form.Shown += ReapplyWindowFrame;
+            form.Activated -= ReapplyWindowFrame;
+            form.Activated += ReapplyWindowFrame;
+        }
+    }
+
+    private static void ReapplyWindowFrame(object? sender, EventArgs args)
+    {
+        if (sender is Form form && form.Tag is NetPulseTheme theme)
             ApplyWindowFrame(form, theme);
     }
 
     public static void ApplyWindowFrame(Form form, NetPulseTheme theme)
     {
+        form.Tag = theme;
         if (!form.IsHandleCreated || !OperatingSystem.IsWindowsVersionAtLeast(10))
             return;
 

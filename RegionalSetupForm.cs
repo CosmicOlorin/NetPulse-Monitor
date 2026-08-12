@@ -17,7 +17,10 @@ internal sealed class RegionalSetupForm : Form
         (_timeZone.SelectedItem as RegionalTimeZoneOption)?.Id ??
         TimeZoneInfo.Local.Id;
 
-    public RegionalSetupForm(AppSettings settings, bool firstRun)
+    public RegionalSetupForm(
+        AppSettings settings,
+        bool firstRun,
+        NetPulseTheme theme)
     {
         Text = firstRun
             ? "Country and official time"
@@ -161,6 +164,7 @@ internal sealed class RegionalSetupForm : Form
             UpdatePreview();
             save.Focus();
         };
+        AppThemeManager.Apply(this, theme);
     }
 
     private static void AddRow(

@@ -21,8 +21,8 @@ change presentation only; monitoring and logging continue unchanged.
 
 The Dashboard's **Local path** strip refreshes every 30 seconds and shows the
 current gateway latency, DNS lookup latency, IPv4 and IPv6 availability. These
-checks are useful for LTE, DSL and fiber: they distinguish a local Wi-Fi/Ethernet
-or DNS problem from a wider internet outage. They run asynchronously and do not
+checks are useful for LTE, DSL and fiber: they distinguish a local gateway or
+DNS problem from a wider internet outage. They run asynchronously and do not
 change Windows or router settings.
 
 The **Diagnostics** tab shows the same latest measurements in full, includes the
@@ -33,7 +33,7 @@ default gateway address, provides an immediate **Run diagnostics** action and
   or upstream network. A missing gateway usually means the active Windows adapter
   is not fully connected.
 - **Gateway latency**: round-trip time from the PC to that gateway. This mainly
-  reflects the local Wi-Fi/Ethernet path, not the complete internet route.
+  reflects the local path to the router, not the complete internet route.
 - **DNS lookup latency**: time required to resolve a hostname. A slow result can
   indicate DNS delay even when ordinary ping remains healthy.
 - **IPv4**: whether an operational IPv4 path is available to the PC.

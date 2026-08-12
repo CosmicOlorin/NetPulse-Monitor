@@ -16,7 +16,7 @@
     <Version>1.0.7</Version>
     <Authors>CosmicOlorin</Authors>
     <Copyright>Copyright © 2026 CosmicOlorin. All rights reserved.</Copyright>
-    <Description>Windows Internet, local-link, LTE router, outage, SMS, and speed monitor.</Description>
+    <Description>Windows Internet, LTE router, outage, SMS, and speed monitor.</Description>
     <RepositoryUrl>https://github.com/CosmicOlorin/NetPulse-Monitor</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>

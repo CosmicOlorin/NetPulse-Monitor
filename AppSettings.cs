@@ -22,7 +22,6 @@ internal sealed class AppSettings
     public string TpLinkRouterAddress { get; set; } = "http://192.168.1.1/";
     public bool RememberTpLinkPassword { get; set; } = true;
     public string ConnectionDetailsView { get; set; } = "Lte";
-    public string LocalLinkView { get; set; } = "Auto";
     public bool AutomaticCellLockEnabled { get; set; }
     public int AutomaticCellLockMinimumDwellMinutes { get; set; } = 30;
     public int AutomaticCellLockMaxChangesPerDay { get; set; } = 6;
@@ -101,9 +100,6 @@ internal sealed class AppSettings
             "Ftth" or "Fttb" or "Fiber" => "Fiber",
             _ => "Lte"
         };
-        LocalLinkView = LocalLinkView is "Wifi" or "Ethernet"
-            ? LocalLinkView
-            : "Auto";
         AutomaticCellLockMinimumDwellMinutes = Math.Clamp(
             AutomaticCellLockMinimumDwellMinutes, 15, 360);
         AutomaticCellLockMaxChangesPerDay = Math.Clamp(

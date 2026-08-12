@@ -153,7 +153,7 @@ internal static class TroubleshootingAdvisor
         {
             severity = "Critical";
             findings.Add("The local gateway is not responding normally.");
-            actions.Add("Check the Ethernet/Wi-Fi link and restart the local adapter or router.");
+            actions.Add("Check the local connection and restart the router if needed.");
         }
         if (monitor.PacketLossPercent >= 2)
         {
