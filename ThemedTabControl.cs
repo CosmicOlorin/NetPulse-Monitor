@@ -79,19 +79,36 @@ internal sealed class ThemedTabControl : TabControl
         }
 
         // The native WinForms tab draws a bright 3-D frame even when its pages
-        // are owner-drawn. Cover that frame with the palette border so dark mode
-        // never leaves a white rectangle around the active page.
+        // are owner-drawn. Cover both the frame around DisplayRectangle and the
+        // control's complete outer edge. The latter matters at non-100% DPI:
+        // Windows can round the native frame outward and otherwise leave one or
+        // more bright pixels along the left edge of the window.
         Rectangle display = DisplayRectangle;
-        int left = Math.Max(0, display.Left - 3);
-        int top = Math.Max(0, display.Top - 3);
-        int right = Math.Min(ClientSize.Width, display.Right + 3);
-        int bottom = Math.Min(ClientSize.Height, display.Bottom + 3);
+        int frameThickness = Math.Max(4, LogicalToDeviceUnits(4));
+        int outerThickness = Math.Max(6, LogicalToDeviceUnits(6));
+        int left = Math.Max(0, display.Left - frameThickness);
+        int top = Math.Max(0, display.Top - frameThickness);
+        int right = Math.Min(ClientSize.Width, display.Right + frameThickness);
+        int bottom = Math.Min(ClientSize.Height, display.Bottom + frameThickness);
         using var frameBrush = new SolidBrush(_frameColor);
-        graphics.FillRectangle(frameBrush, left, top, Math.Max(0, right - left), 4);
-        graphics.FillRectangle(frameBrush, left, top, 4, Math.Max(0, bottom - top));
-        graphics.FillRectangle(frameBrush, Math.Max(left, right - 4), top,
-            Math.Min(4, Math.Max(0, right - left)), Math.Max(0, bottom - top));
-        graphics.FillRectangle(frameBrush, left, Math.Max(top, bottom - 4),
-            Math.Max(0, right - left), Math.Min(4, Math.Max(0, bottom - top)));
+        graphics.FillRectangle(frameBrush, left, top,
+            Math.Max(0, right - left), frameThickness);
+        graphics.FillRectangle(frameBrush, left, top,
+            frameThickness, Math.Max(0, bottom - top));
+        graphics.FillRectangle(frameBrush, Math.Max(left, right - frameThickness), top,
+            Math.Min(frameThickness, Math.Max(0, right - left)), Math.Max(0, bottom - top));
+        graphics.FillRectangle(frameBrush, left, Math.Max(top, bottom - frameThickness),
+            Math.Max(0, right - left), Math.Min(frameThickness, Math.Max(0, bottom - top)));
+
+        int pageTop = Math.Max(headerHeight, top);
+        int pageHeight = Math.Max(0, ClientSize.Height - pageTop);
+        graphics.FillRectangle(frameBrush, 0, pageTop,
+            Math.Min(outerThickness, ClientSize.Width), pageHeight);
+        graphics.FillRectangle(frameBrush,
+            Math.Max(0, ClientSize.Width - outerThickness), pageTop,
+            Math.Min(outerThickness, ClientSize.Width), pageHeight);
+        graphics.FillRectangle(frameBrush, 0,
+            Math.Max(pageTop, ClientSize.Height - outerThickness),
+            ClientSize.Width, Math.Min(outerThickness, pageHeight));
     }
 }

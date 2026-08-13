@@ -6,6 +6,7 @@ internal static class Program
     private static void Main()
     {
         ApplicationConfiguration.Initialize();
+        WindowsNotificationIdentity.EnsureRegistered();
         Application.Run(new MainForm());
     }
 }
