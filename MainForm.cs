@@ -4668,14 +4668,19 @@ internal sealed class MainForm : Form
             ("Data", "DATA USED"), ("RouterUpload", "ROUTER UPLOAD"),
             ("RouterDownload", "ROUTER DOWNLOAD"), ("Updated", "LAST UPDATE"));
 
-        _routerConnectionState.Text = telemetry.Status.ToUpperInvariant();
-        _routerConnectionState.BackColor = telemetry.IsConnected
-            ? Color.SeaGreen
-            : telemetry.Status.Contains("connect", StringComparison.OrdinalIgnoreCase)
-                ? Color.DarkGoldenrod
-                : telemetry.Status.Equals("Disabled", StringComparison.OrdinalIgnoreCase)
-                    ? Color.DimGray
-                    : Color.Firebrick;
+        RouterManagementState management = _routerMonitor.GetManagementState();
+        _routerConnectionState.Text = RouterManagementLabel(management).ToUpperInvariant();
+        _routerConnectionState.BackColor = management switch
+        {
+            RouterManagementState.Connected => Color.SeaGreen,
+            RouterManagementState.Connecting or
+            RouterManagementState.SlowResponse or
+            RouterManagementState.Reconnecting or
+            RouterManagementState.Busy => Color.DarkGoldenrod,
+            RouterManagementState.Disabled or
+            RouterManagementState.NotConfigured => Color.DimGray,
+            _ => Color.Firebrick
+        };
 
         string[] identityParts =
         [
@@ -4690,11 +4695,18 @@ internal sealed class MainForm : Form
                 .Distinct(StringComparer.OrdinalIgnoreCase));
         if (versionDetails.Length == 0)
             versionDetails = "TP-Link router • protected local telemetry";
+        MonitorSnapshot internet = _engine.GetSnapshot();
+        string pathStates =
+            $"Router: {RouterManagementLabel(management)}  •  " +
+            $"LTE: {(telemetry.IsConnected ? "registered" : "not registered")}  •  " +
+            $"Internet: {(internet.IsOnline ? "online" : "offline")}";
         _routerDetails.Text = string.IsNullOrWhiteSpace(telemetry.Error)
-            ? versionDetails
-            : telemetry.Error;
+            ? versionDetails + "  •  " + pathStates
+            : pathStates + "  •  " + telemetry.Error;
 
-        _routerMetrics["Status"].Text = DisplayValue(telemetry.Status);
+        _routerMetrics["Status"].Text =
+            $"Router {RouterManagementLabel(management)} / LTE " +
+            (telemetry.IsConnected ? "registered" : "not registered");
         _routerMetrics["Isp"].Text = DisplayValue(telemetry.Isp);
         _routerMetrics["Network"].Text = DisplayValue(telemetry.NetworkType);
         _routerMetrics["Band"].Text = DisplayValue(telemetry.Band);
@@ -4715,6 +4727,15 @@ internal sealed class MainForm : Form
             ? _clock.FormatTime(telemetry.Timestamp)
             : "";
     }
+
+    private static string RouterManagementLabel(RouterManagementState state) => state switch
+    {
+        RouterManagementState.NotConfigured => "not configured",
+        RouterManagementState.SlowResponse => "slow response",
+        RouterManagementState.AuthenticationRequired => "authentication required",
+        RouterManagementState.Unreachable => "unreachable",
+        _ => state.ToString().ToLowerInvariant()
+    };
 
     private void RefreshInternetConnectionDashboard()
     {

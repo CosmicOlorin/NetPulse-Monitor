@@ -1361,9 +1361,23 @@ static void TestAutomaticSpeedTests()
     Require(!coordinator.TryTakeDue(now.AddSeconds(10), out _),
         "A changed LTE state must settle before testing.");
     Require(coordinator.TryTakeDue(now.AddSeconds(14), out AutomaticSpeedTestRequest? lte) &&
-            lte!.Reason.Contains("LTE band changed", StringComparison.Ordinal) &&
+            lte!.Reason.Contains("LTE primary band changed", StringComparison.Ordinal) &&
             lte.Reason.Contains("LTE cell changed", StringComparison.Ordinal),
         "Band and cell changes should coalesce into one attributed test.");
+
+    var aggregationCoordinator = new AutomaticSpeedTestCoordinator();
+    aggregationCoordinator.ObserveRouterTelemetry(
+        Telemetry(now, "B1", "100", "100", "ABC"), now);
+    aggregationCoordinator.ObserveRouterTelemetry(
+        Telemetry(now.AddSeconds(1), "B1 + B3", "100", "100", "ABC"),
+        now.AddSeconds(1));
+    Require(!aggregationCoordinator.TryTakeDue(now.AddMinutes(1), out _),
+        "Adding an SCell to the same PCell must not trigger a speed test.");
+    aggregationCoordinator.ObserveRouterTelemetry(
+        Telemetry(now.AddSeconds(2), "B1", "100", "100", "ABC"),
+        now.AddSeconds(2));
+    Require(!aggregationCoordinator.TryTakeDue(now.AddMinutes(2), out _),
+        "Removing an SCell from the same PCell must not trigger a speed test.");
 
     coordinator.ObserveOutage();
     coordinator.ObserveRecovery(now.AddSeconds(20));

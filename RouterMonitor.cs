@@ -17,6 +17,7 @@ internal sealed class RouterMonitor : IDisposable
     private AppSettings _settings;
     private string _password;
     private RouterTelemetry _latest = new();
+    private RouterManagementState _managementState = RouterManagementState.NotConfigured;
     private bool _disposed;
 
     public event Action<RouterTelemetry>? TelemetryUpdated;
@@ -45,6 +46,18 @@ internal sealed class RouterMonitor : IDisposable
             return _latest;
     }
 
+    public RouterManagementState GetManagementState()
+    {
+        lock (_gate)
+            return _managementState;
+    }
+
+    private void SetManagementState(RouterManagementState state)
+    {
+        lock (_gate)
+            _managementState = state;
+    }
+
     public void Start()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -53,12 +66,14 @@ internal sealed class RouterMonitor : IDisposable
 
         if (!_settings.TpLinkRouterEnabled)
         {
+            SetManagementState(RouterManagementState.Disabled);
             Publish(new RouterTelemetry { Status = "Disabled" });
             return;
         }
 
         if (string.IsNullOrWhiteSpace(_password))
         {
+            SetManagementState(RouterManagementState.NotConfigured);
             Publish(new RouterTelemetry
             {
                 Status = "Password required",
@@ -274,6 +289,7 @@ internal sealed class RouterMonitor : IDisposable
                 }
 
                 Publish(telemetry);
+                SetManagementState(RouterManagementState.Connected);
                 consecutiveFailures = 0;
                 if (previousState == "offline")
                 {
@@ -311,6 +327,7 @@ internal sealed class RouterMonitor : IDisposable
             }
             catch (RouterAuthenticationException ex)
             {
+                SetManagementState(RouterManagementState.AuthenticationRequired);
                 PublishFailure("Authentication required", ex.Message);
                 RaiseStateEvent(ref previousState, "authentication", new MonitorEvent
                 {
@@ -321,6 +338,7 @@ internal sealed class RouterMonitor : IDisposable
             }
             catch (RouterBusyException ex)
             {
+                SetManagementState(RouterManagementState.Busy);
                 PublishFailure("Web session active", ex.Message);
                 RaiseStateEvent(ref previousState, "busy", new MonitorEvent
                 {
@@ -336,6 +354,7 @@ internal sealed class RouterMonitor : IDisposable
                 consecutiveFailures++;
                 if (consecutiveFailures < 3 && _provider is { IsConnected: true })
                 {
+                    SetManagementState(RouterManagementState.SlowResponse);
                     if (consecutiveFailures == 1)
                     {
                         EventOccurred?.Invoke(new MonitorEvent
@@ -348,6 +367,9 @@ internal sealed class RouterMonitor : IDisposable
                     nextTick = Stopwatch.GetTimestamp();
                     continue;
                 }
+                SetManagementState(consecutiveFailures < 6
+                    ? RouterManagementState.Reconnecting
+                    : RouterManagementState.Unreachable);
                 PublishFailure("Router unavailable", FriendlyError(ex));
                 RaiseStateEvent(ref previousState, "offline", new MonitorEvent
                 {
@@ -427,11 +449,11 @@ internal sealed class RouterMonitor : IDisposable
         await _providerGate.WaitAsync(cancellationToken);
         try
         {
-            await EnsureProviderConnectedUnsafeAsync(cancellationToken);
-            if (_provider is not IRouterCellLockProvider cellLockProvider)
-                throw new RouterConnectionException(
-                    "This router provider does not support Cell Lock changes.");
-            return await operation(cellLockProvider);
+            return await ExecuteWithReconnectUnsafeAsync(
+                provider => provider as IRouterCellLockProvider,
+                "This router provider does not support Cell Lock changes.",
+                operation,
+                cancellationToken);
         }
         finally
         {
@@ -447,11 +469,11 @@ internal sealed class RouterMonitor : IDisposable
         await _providerGate.WaitAsync(cancellationToken);
         try
         {
-            await EnsureProviderConnectedUnsafeAsync(cancellationToken);
-            if (_provider is not IRouterSmsProvider smsProvider)
-                throw new RouterConnectionException(
-                    "This router provider does not support SMS.");
-            return await operation(smsProvider);
+            return await ExecuteWithReconnectUnsafeAsync(
+                provider => provider as IRouterSmsProvider,
+                "This router provider does not support SMS.",
+                operation,
+                cancellationToken);
         }
         finally
         {
@@ -467,11 +489,11 @@ internal sealed class RouterMonitor : IDisposable
         await _providerGate.WaitAsync(cancellationToken);
         try
         {
-            await EnsureProviderConnectedUnsafeAsync(cancellationToken);
-            if (_provider is not IRouterMobileNetworkModeProvider modeProvider)
-                throw new RouterConnectionException(
-                    "This router provider does not support mobile network mode changes.");
-            return await operation(modeProvider);
+            return await ExecuteWithReconnectUnsafeAsync(
+                provider => provider as IRouterMobileNetworkModeProvider,
+                "This router provider does not support mobile network mode changes.",
+                operation,
+                cancellationToken);
         }
         finally
         {
@@ -497,9 +519,10 @@ internal sealed class RouterMonitor : IDisposable
         if (_provider.IsConnected)
             return null;
 
+        SetManagementState(RouterManagementState.Connecting);
         Publish(new RouterTelemetry { Status = "Connecting..." });
         Uri uri = new(_settings.TpLinkRouterAddress, UriKind.Absolute);
-        return await _provider.ConnectAsync(
+        RouterCapabilities capabilities = await _provider.ConnectAsync(
             new RouterConnectionOptions
             {
                 RouterUri = uri,
@@ -507,6 +530,49 @@ internal sealed class RouterMonitor : IDisposable
                 AllowSessionTakeover = true
             },
             cancellationToken);
+        SetManagementState(RouterManagementState.Connected);
+        return capabilities;
+    }
+
+    private async Task<T> ExecuteWithReconnectUnsafeAsync<TProvider, T>(
+        Func<IRouterTelemetryProvider, TProvider?> selectProvider,
+        string unsupportedMessage,
+        Func<TProvider, Task<T>> operation,
+        CancellationToken cancellationToken)
+        where TProvider : class
+    {
+        await EnsureProviderConnectedUnsafeAsync(cancellationToken);
+        TProvider provider = selectProvider(_provider!) ??
+            throw new RouterConnectionException(unsupportedMessage);
+        try
+        {
+            return await operation(provider);
+        }
+        catch (RouterAuthenticationException)
+        {
+            SetManagementState(RouterManagementState.Reconnecting);
+            await ResetProviderUnsafeAsync();
+            await EnsureProviderConnectedUnsafeAsync(cancellationToken);
+            provider = selectProvider(_provider!) ??
+                throw new RouterConnectionException(unsupportedMessage);
+            return await operation(provider);
+        }
+    }
+
+    // The caller holds _providerGate, so this variant must not reacquire it.
+    private async Task ResetProviderUnsafeAsync()
+    {
+        IRouterTelemetryProvider? provider = _provider;
+        _provider = null;
+        if (provider is null)
+            return;
+        try
+        {
+            await provider.DisposeAsync();
+        }
+        catch
+        {
+        }
     }
 
     public void Dispose()

@@ -47,8 +47,11 @@ internal sealed class AutomaticSpeedTestCoordinator
             if (previous is null)
                 return;
 
-            if (Changed(previous.Band, telemetry.Band))
-                QueueLocked("LTE band changed", nowUtc);
+            // Carrier aggregation may add/remove SCells every few seconds while
+            // the serving PCell is unchanged (for example B1 <-> B1+B3). That is
+            // not a new serving connection and must not trigger a 20/5 MB test.
+            if (Changed(PrimaryBand(previous), PrimaryBand(telemetry)))
+                QueueLocked("LTE primary band changed", nowUtc);
 
             if (CellChanged(previous, telemetry))
                 QueueLocked("LTE cell changed", nowUtc);
@@ -110,6 +113,16 @@ internal sealed class AutomaticSpeedTestCoordinator
                    previous.CellId.Trim(),
                    current.CellId.Trim(),
                    StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string PrimaryBand(RouterTelemetry telemetry)
+    {
+        if (IsValue(telemetry.PrimaryBand))
+            return telemetry.PrimaryBand.Trim();
+
+        string profile = telemetry.Band?.Trim() ?? "";
+        int separator = profile.IndexOf('+');
+        return separator >= 0 ? profile[..separator].Trim() : profile;
     }
 
     private static bool Changed(

@@ -1,5 +1,18 @@
 namespace NetPulseMonitor;
 
+internal enum RouterManagementState
+{
+    Disabled,
+    NotConfigured,
+    Connecting,
+    Connected,
+    SlowResponse,
+    Reconnecting,
+    AuthenticationRequired,
+    Busy,
+    Unreachable
+}
+
 internal sealed class RouterConnectionOptions
 {
     public required Uri RouterUri { get; init; }
