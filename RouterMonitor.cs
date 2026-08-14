@@ -251,22 +251,13 @@ internal sealed class RouterMonitor : IDisposable
                 await _providerGate.WaitAsync(cancellationToken);
                 try
                 {
-                    _provider ??= _providerFactory();
-                    if (!_provider.IsConnected)
-                    {
-                        Publish(new RouterTelemetry { Status = "Connecting…" });
-                        Uri uri = new(_settings.TpLinkRouterAddress, UriKind.Absolute);
-                        connectedCapabilities = await _provider.ConnectAsync(
-                            new RouterConnectionOptions
-                            {
-                                RouterUri = uri,
-                                Password = _password,
-                                AllowSessionTakeover = true
-                            },
-                            cancellationToken);
-                    }
+                    bool wasConnected = _provider is { IsConnected: true };
+                    connectedCapabilities = await EnsureProviderConnectedUnsafeAsync(
+                        cancellationToken);
+                    if (wasConnected)
+                        connectedCapabilities = null;
 
-                    telemetry = await _provider.ReadAsync(cancellationToken);
+                    telemetry = await _provider!.ReadAsync(cancellationToken);
                 }
                 finally
                 {
@@ -343,6 +334,20 @@ internal sealed class RouterMonitor : IDisposable
             catch (Exception ex)
             {
                 consecutiveFailures++;
+                if (consecutiveFailures < 3 && _provider is { IsConnected: true })
+                {
+                    if (consecutiveFailures == 1)
+                    {
+                        EventOccurred?.Invoke(new MonitorEvent
+                        {
+                            Kind = "ROUTER",
+                            Message = "TP-Link telemetry response delayed; keeping the local session"
+                        });
+                    }
+                    await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+                    nextTick = Stopwatch.GetTimestamp();
+                    continue;
+                }
                 PublishFailure("Router unavailable", FriendlyError(ex));
                 RaiseStateEvent(ref previousState, "offline", new MonitorEvent
                 {
@@ -422,9 +427,7 @@ internal sealed class RouterMonitor : IDisposable
         await _providerGate.WaitAsync(cancellationToken);
         try
         {
-            if (_provider is not { IsConnected: true })
-                throw new RouterConnectionException(
-                    "Connect TP-Link monitoring before changing Cell Lock settings.");
+            await EnsureProviderConnectedUnsafeAsync(cancellationToken);
             if (_provider is not IRouterCellLockProvider cellLockProvider)
                 throw new RouterConnectionException(
                     "This router provider does not support Cell Lock changes.");
@@ -444,9 +447,7 @@ internal sealed class RouterMonitor : IDisposable
         await _providerGate.WaitAsync(cancellationToken);
         try
         {
-            if (_provider is not { IsConnected: true })
-                throw new RouterConnectionException(
-                    "Connect TP-Link monitoring before using SMS.");
+            await EnsureProviderConnectedUnsafeAsync(cancellationToken);
             if (_provider is not IRouterSmsProvider smsProvider)
                 throw new RouterConnectionException(
                     "This router provider does not support SMS.");
@@ -466,9 +467,7 @@ internal sealed class RouterMonitor : IDisposable
         await _providerGate.WaitAsync(cancellationToken);
         try
         {
-            if (_provider is not { IsConnected: true })
-                throw new RouterConnectionException(
-                    "Connect TP-Link monitoring before changing the mobile network mode.");
+            await EnsureProviderConnectedUnsafeAsync(cancellationToken);
             if (_provider is not IRouterMobileNetworkModeProvider modeProvider)
                 throw new RouterConnectionException(
                     "This router provider does not support mobile network mode changes.");
@@ -488,6 +487,27 @@ internal sealed class RouterMonitor : IDisposable
         RouterConnectionException => exception.Message,
         _ => "The router status request failed."
     };
+
+    // The caller must hold _providerGate. Router management is local and must
+    // remain available even when the monitored Internet connection is offline.
+    private async Task<RouterCapabilities?> EnsureProviderConnectedUnsafeAsync(
+        CancellationToken cancellationToken)
+    {
+        _provider ??= _providerFactory();
+        if (_provider.IsConnected)
+            return null;
+
+        Publish(new RouterTelemetry { Status = "Connecting..." });
+        Uri uri = new(_settings.TpLinkRouterAddress, UriKind.Absolute);
+        return await _provider.ConnectAsync(
+            new RouterConnectionOptions
+            {
+                RouterUri = uri,
+                Password = _password,
+                AllowSessionTakeover = true
+            },
+            cancellationToken);
+    }
 
     public void Dispose()
     {

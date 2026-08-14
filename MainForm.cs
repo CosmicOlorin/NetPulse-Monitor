@@ -2910,22 +2910,15 @@ internal sealed class MainForm : Form
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        if (!_engine.GetSnapshot().IsOnline)
-        {
-            MessageBox.Show(
-                "Internet monitoring is currently offline. Wait for a stable connection " +
-                "so rollback validation has a valid baseline.",
-                "Manual Cell Lock",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Warning);
-            return;
-        }
+        bool internetIsOnline = _engine.GetSnapshot().IsOnline;
         string cidText = cid is null ? "not used (optional)" : cid;
+        string safetyText = internetIsOnline
+            ? "NetPulse will validate connectivity and restore the previous settings if validation fails."
+            : "Internet is already offline. If the router accepts this lock, NetPulse will keep it so you can use it to recover service. Use Restore automatic if needed.";
         if (MessageBox.Show(
                 $"Save and apply this MR600 primary-cell lock?\r\n\r\n" +
                 $"Band profile: {band}\r\nEARFCN: {earfcn}\r\nPCI: {pci}\r\nCID: {cidText}\r\n\r\n" +
-                "Mobile service may briefly disconnect. NetPulse will restore the " +
-                "previous settings if connectivity validation fails.",
+                "Mobile service may briefly disconnect. " + safetyText,
                 "Manual Cell Lock",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning) != DialogResult.Yes)
@@ -4175,16 +4168,7 @@ internal sealed class MainForm : Form
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        if (!_engine.GetSnapshot().IsOnline)
-        {
-            MessageBox.Show(
-                "Internet monitoring is currently offline. Wait for a stable connection " +
-                "before applying a lock so the rollback check has a valid baseline.",
-                "Apply Cell Lock",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Warning);
-            return;
-        }
+        bool internetIsOnline = _engine.GetSnapshot().IsOnline;
 
         string lockDetails;
         if (target!.HasCellTarget)
@@ -4200,13 +4184,14 @@ internal sealed class MainForm : Form
             lockDetails =
                 "Cell: automatic (this firmware does not expose live PCI in Auto mode)";
         }
+        string validationText = internetIsOnline
+            ? $"NetPulse will validate for {_settings.CellLockValidationSeconds} seconds and restore the previous router settings if internet or LTE does not recover."
+            : "Internet is already offline. If the router accepts this lock, NetPulse will keep it so you can use it to recover service. Use Restore automatic if needed.";
         DialogResult answer = MessageBox.Show(
             $"Apply this measured MR600 profile?\r\n\r\n" +
             $"Band: {selected.Band}\r\n" +
             lockDetails + "\r\n\r\n" +
-            "Mobile service may briefly disconnect. NetPulse will validate for " +
-            $"{_settings.CellLockValidationSeconds} seconds and restore the previous " +
-            "router settings if internet or LTE does not recover.",
+            "Mobile service may briefly disconnect. " + validationText,
             "Apply Cell Lock",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Warning);
@@ -4342,6 +4327,7 @@ internal sealed class MainForm : Form
         if (_cellLockBusy)
             return;
         _cellLockBusy = true;
+        bool internetWasOnline = _engine.GetSnapshot().IsOnline;
         string profileKind = target.HasCellTarget ? "cell + band lock" : "band profile";
         RouterLockState? previousState = null;
         try
@@ -4385,7 +4371,28 @@ internal sealed class MainForm : Form
 
             AddCellLockEvent(
                 (automatic ? "Automatic" : "Manual") +
-                $" MR600 {profileKind} applied for {recommendation.Band}; validating connectivity");
+                $" MR600 {profileKind} applied for {recommendation.Band}" +
+                (!automatic && !internetWasOnline
+                    ? "; retained without Internet rollback because service was already offline"
+                    : "; validating connectivity"));
+
+            if (!automatic && !internetWasOnline)
+            {
+                ClearPendingCellLock();
+                _routerDetails.Text =
+                    $"{recommendation.Band} Cell Lock accepted while Internet is offline.";
+                if (showResult && !IsDisposed)
+                {
+                    MessageBox.Show(
+                        $"The router accepted the selected {profileKind}.\r\n\r\n" +
+                        "Internet was already offline, so the lock was kept without " +
+                        "connectivity rollback. Use Restore automatic if needed.",
+                        "Cell Lock active",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+                return;
+            }
             _routerDetails.Text =
                 $"Validating {recommendation.Band} Cell Lock for " +
                 $"{_settings.CellLockValidationSeconds} seconds…";
