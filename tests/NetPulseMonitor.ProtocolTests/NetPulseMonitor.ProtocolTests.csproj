@@ -8,10 +8,12 @@
   </PropertyGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\..\mobile\NetPulse.Companion.Core\NetPulse.Companion.Core.csproj" />
     <Compile Include="..\..\AppSettings.cs" Link="AppSettings.cs" />
     <Compile Include="..\..\RegionalSettings.cs" Link="RegionalSettings.cs" />
     <Compile Include="..\..\UnreadSmsAlertTracker.cs" Link="UnreadSmsAlertTracker.cs" />
     <Compile Include="..\..\AutomaticSpeedTestCoordinator.cs" Link="AutomaticSpeedTestCoordinator.cs" />
+    <Compile Include="..\..\CompanionService.cs" Link="CompanionService.cs" />
     <Compile Include="..\..\ExperienceServices.cs" Link="ExperienceServices.cs" />
     <Compile Include="..\..\Models.cs" Link="Models.cs" />
     <Compile Include="..\..\RouterModels.cs" Link="RouterModels.cs" />

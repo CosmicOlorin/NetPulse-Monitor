@@ -42,6 +42,8 @@ internal sealed class AppSettings
     public DateTime? LastUpdateCheckUtc { get; set; }
     public int CellExperimentMinutesPerProfile { get; set; } = 5;
     public bool DiscoveryHistoryImported { get; set; }
+    public bool CompanionEnabled { get; set; }
+    public int CompanionPort { get; set; } = 45831;
 
     public static string SettingsFolder =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -117,6 +119,7 @@ internal sealed class AppSettings
         };
         CellExperimentMinutesPerProfile = Math.Clamp(
             CellExperimentMinutesPerProfile, 2, 30);
+        CompanionPort = Math.Clamp(CompanionPort, 1024, 65535);
         SmsContacts = (SmsContacts ?? [])
             .Where(item =>
                 !string.IsNullOrWhiteSpace(item.Key) &&

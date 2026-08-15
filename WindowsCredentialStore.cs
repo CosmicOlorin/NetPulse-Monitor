@@ -7,11 +7,28 @@ namespace NetPulseMonitor;
 internal static class WindowsCredentialStore
 {
     private const string TargetName = "NetPulseMonitor:TpLinkMr600";
+    private const string CompanionTargetName = "NetPulseMonitor:CompanionPairing";
     private const uint CredTypeGeneric = 1;
     private const uint CredPersistLocalMachine = 2;
     private const int ErrorNotFound = 1168;
 
-    public static void SavePassword(string password)
+    public static void SavePassword(string password) =>
+        SaveSecret(TargetName, "router", password, "TP-Link password");
+
+    public static string? ReadPassword() => ReadSecret(TargetName, "TP-Link password");
+
+    public static void DeletePassword() => DeleteSecret(TargetName, "TP-Link password");
+
+    public static void SaveCompanionSecret(string secret) =>
+        SaveSecret(CompanionTargetName, "companion", secret, "companion pairing key");
+
+    public static string? ReadCompanionSecret() =>
+        ReadSecret(CompanionTargetName, "companion pairing key");
+
+    public static void DeleteCompanionSecret() =>
+        DeleteSecret(CompanionTargetName, "companion pairing key");
+
+    private static void SaveSecret(string target, string userName, string password, string description)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(password);
 
@@ -27,16 +44,16 @@ internal static class WindowsCredentialStore
             var credential = new Credential
             {
                 Type = CredTypeGeneric,
-                TargetName = TargetName,
+                TargetName = target,
                 CredentialBlobSize = (uint)secret.Length,
                 CredentialBlob = blob,
                 Persist = CredPersistLocalMachine,
-                UserName = "router"
+                UserName = userName
             };
 
             if (!CredWrite(ref credential, 0))
                 throw new Win32Exception(Marshal.GetLastWin32Error(),
-                    "Windows could not protect the TP-Link password.");
+                    $"Windows could not protect the {description}.");
         }
         finally
         {
@@ -50,15 +67,15 @@ internal static class WindowsCredentialStore
         }
     }
 
-    public static string? ReadPassword()
+    private static string? ReadSecret(string target, string description)
     {
-        if (!CredRead(TargetName, CredTypeGeneric, 0, out IntPtr pointer))
+        if (!CredRead(target, CredTypeGeneric, 0, out IntPtr pointer))
         {
             int error = Marshal.GetLastWin32Error();
             if (error == ErrorNotFound)
                 return null;
             throw new Win32Exception(error,
-                "Windows could not read the protected TP-Link password.");
+                $"Windows could not read the protected {description}.");
         }
 
         try
@@ -85,15 +102,15 @@ internal static class WindowsCredentialStore
         }
     }
 
-    public static void DeletePassword()
+    private static void DeleteSecret(string target, string description)
     {
-        if (CredDelete(TargetName, CredTypeGeneric, 0))
+        if (CredDelete(target, CredTypeGeneric, 0))
             return;
 
         int error = Marshal.GetLastWin32Error();
         if (error != ErrorNotFound)
             throw new Win32Exception(error,
-                "Windows could not remove the protected TP-Link password.");
+                $"Windows could not remove the protected {description}.");
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]

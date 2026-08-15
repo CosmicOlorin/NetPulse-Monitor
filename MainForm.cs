@@ -14,6 +14,7 @@ internal sealed class MainForm : Form
     private OfficialClock _clock;
     private MonitorEngine _engine;
     private RouterMonitor _routerMonitor;
+    private readonly CompanionService _companionService;
     private string _routerPassword = "";
 
     private readonly Dictionary<string, Label> _metrics = new();
@@ -53,6 +54,7 @@ internal sealed class MainForm : Form
     private readonly TextBox _routerAddressInput = new();
     private readonly Button _routerSetupButton = new();
     private readonly Button _regionalSetupButton = new();
+    private readonly Button _companionSetupButton = new();
     private readonly ComboBox _mobileNetworkModeInput = new();
     private readonly Button _mobileNetworkModeRefreshButton = new();
     private readonly Button _mobileNetworkModeApplyButton = new();
@@ -183,6 +185,7 @@ internal sealed class MainForm : Form
         _routerPassword = ReadProtectedRouterPassword();
         _engine = CreateEngine();
         _routerMonitor = CreateRouterMonitor();
+        _companionService = new CompanionService(CreateCompanionSnapshot);
 
         AutoScaleMode = AutoScaleMode.Dpi;
         Text = "NetPulse Monitor";
@@ -223,6 +226,7 @@ internal sealed class MainForm : Form
             _nextAutomaticSpeedTest = GetNextSpeedTime();
             _engine.Start();
             _routerMonitor.Start();
+            await RestartCompanionServiceAsync(showErrors: false);
             _nextAutomaticSmsRefreshUtc = DateTime.UtcNow;
             _nextAutomaticDiagnosticsUtc = DateTime.UtcNow;
             _uiTimer.Start();
@@ -1763,7 +1767,7 @@ internal sealed class MainForm : Form
         TableLayoutPanel monitoring = CreateSettingsSection(
             "Monitoring, dashboard and appearance", 9);
         TableLayoutPanel integration = CreateSettingsSection(
-            "Windows, regional time and TP-Link", 10);
+            "Windows, regional time, TP-Link and mobile", 11);
 
         _pingIntervalInput.Minimum = 1;
         _pingIntervalInput.Maximum = 300;
@@ -1868,6 +1872,9 @@ internal sealed class MainForm : Form
             _mobileNetworkModeApplyButton,
             "Apply the selected mode. Mobile service can disconnect briefly while the router registers again.");
         AddSettingRow(integration, 9, "Mobile network mode", mobileNetworkModeEditor);
+        _companionSetupButton.Text = "Configure persistent phone pairing...";
+        _companionSetupButton.Click += async (_, _) => await ConfigureCompanionAsync();
+        AddSettingRow(integration, 10, "Mobile companion", _companionSetupButton);
         ShowMobileNetworkModePlaceholder(
             "Open Settings while TP-Link monitoring is connected");
 
@@ -5903,6 +5910,7 @@ internal sealed class MainForm : Form
         _engine.UpdateSettings(_settings);
         _nextAutomaticSpeedTest = GetNextSpeedTime();
         _routerAddressInput.Text = _settings.TpLinkRouterAddress;
+        RefreshCompanionButtonText();
         ApplyAppearanceSettings();
 
         using (var restartTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(8)))
@@ -6360,6 +6368,116 @@ internal sealed class MainForm : Form
         _smsGrid.FirstDisplayedScrollingRowIndex = row.Index;
     }
 
+    private CompanionSnapshot CreateCompanionSnapshot()
+    {
+        MonitorSnapshot internet = _engine.GetSnapshot();
+        RouterTelemetry router = _routerMonitor.GetSnapshot();
+        return new CompanionSnapshot(
+            DateTime.UtcNow,
+            internet.IsOnline,
+            internet.IsPaused,
+            internet.CurrentPingMs.HasValue
+                ? (int)Math.Clamp(internet.CurrentPingMs.Value, int.MinValue, int.MaxValue)
+                : null,
+            internet.JitterMs,
+            internet.PacketLossPercent,
+            internet.AvailabilityPercent,
+            internet.Outages,
+            RouterManagementLabel(_routerMonitor.GetManagementState()),
+            router.IsConnected,
+            router.NetworkType,
+            router.Band,
+            router.PrimaryBand,
+            router.Earfcn,
+            router.Pci,
+            router.CellId,
+            router.RsrpDbm,
+            router.RsrqDb,
+            router.SnrDb,
+            router.UnreadSmsCount);
+    }
+
+    private string GetOrCreateCompanionSecret()
+    {
+        string? secret = WindowsCredentialStore.ReadCompanionSecret();
+        if (!string.IsNullOrWhiteSpace(secret))
+            return secret;
+        secret = CompanionService.CreatePairingSecret();
+        WindowsCredentialStore.SaveCompanionSecret(secret);
+        return secret;
+    }
+
+    private async Task ConfigureCompanionAsync()
+    {
+        string secret;
+        try
+        {
+            secret = GetOrCreateCompanionSecret();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                "Windows could not open the protected mobile pairing key.\r\n\r\n" + ex.Message,
+                "Mobile Companion",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
+        using var dialog = new CompanionSetupForm(_settings, secret, CurrentTheme());
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+            return;
+        try
+        {
+            WindowsCredentialStore.SaveCompanionSecret(dialog.PairingSecret);
+            _settings.CompanionEnabled = dialog.CompanionEnabled;
+            _settings.CompanionPort = dialog.CompanionPort;
+            _settings.Normalize();
+            _settings.Save();
+            await RestartCompanionServiceAsync(showErrors: true);
+            RefreshCompanionButtonText();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                "The mobile companion setting could not be applied.\r\n\r\n" + ex.Message,
+                "Mobile Companion",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+    }
+
+    private async Task RestartCompanionServiceAsync(bool showErrors)
+    {
+        await _companionService.StopAsync();
+        if (!_settings.CompanionEnabled)
+            return;
+        try
+        {
+            _companionService.Start(_settings.CompanionPort, GetOrCreateCompanionSecret());
+            AddLoggedEvent(new MonitorEvent
+            {
+                Kind = "COMPANION",
+                Message = $"Mobile companion listening on the local network at port {_settings.CompanionPort}"
+            });
+        }
+        catch (Exception ex)
+        {
+            AddLoggedEvent(new MonitorEvent
+            {
+                Kind = "COMPANION",
+                Message = "Mobile companion could not start: " + ex.Message
+            });
+            if (showErrors)
+                throw;
+        }
+    }
+
+    private void RefreshCompanionButtonText() =>
+        _companionSetupButton.Text = _settings.CompanionEnabled
+            ? $"Enabled on LAN port {_settings.CompanionPort}..."
+            : "Configure persistent phone pairing...";
+
     private void HideToTray()
     {
         Hide();
@@ -6416,6 +6534,13 @@ internal sealed class MainForm : Form
         _bandDiscoveryCancellation?.Cancel();
         _engine.Dispose();
         _routerMonitor.Dispose();
+        try
+        {
+            _companionService.StopAsync().Wait(TimeSpan.FromSeconds(2));
+        }
+        catch
+        {
+        }
         _cellHistory.Dispose();
         _smsUnreadFont.Dispose();
         _cellGroupFont.Dispose();

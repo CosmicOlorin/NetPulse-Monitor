@@ -1,6 +1,8 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -8,6 +10,7 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using NetPulse.Companion;
 using NetPulseMonitor;
 
 const string modulus =
@@ -651,6 +654,7 @@ try
     TestCellHistoryRanking();
     TestAutoLockPolicy();
     TestAutomaticSpeedTests();
+    await TestCompanionProtocolAsync();
     TestSettingsMigration();
     TestRegionalClock();
     TestUnreadSmsAlerts();
@@ -1390,6 +1394,69 @@ static void TestAutomaticSpeedTests()
     Require(coordinator.TryTakeDue(now.AddSeconds(53), out AutomaticSpeedTestRequest? ip) &&
             ip!.Reason.Contains("public IP changed", StringComparison.Ordinal),
         "A public-IP change must schedule an attributed test.");
+}
+
+static async Task TestCompanionProtocolAsync()
+{
+    var portProbe = new TcpListener(IPAddress.Loopback, 0);
+    portProbe.Start();
+    int port = ((IPEndPoint)portProbe.LocalEndpoint).Port;
+    portProbe.Stop();
+    string secret = CompanionService.CreatePairingSecret();
+    await using var service = new CompanionService(() => new CompanionSnapshot(
+        DateTime.UtcNow, true, false, 42, 3.5, 0.2, 99.9, 1,
+        "connected", true, "4G+ LTE-A", "B1 + B3", "B1", "100", "100",
+        "ABCDE", -95, -10, 12, 2));
+    service.Start(port, secret);
+    using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}/") };
+
+    PairingProfile parsedProfile = PairingProfile.Parse(service.PairingUri);
+    using (var mobileClient = new CompanionClient(
+               parsedProfile with { Host = "127.0.0.1" }))
+    {
+        MobileSnapshot mobileSnapshot = await mobileClient.ReadSnapshotAsync();
+        Require(mobileSnapshot.InternetOnline && mobileSnapshot.PrimaryBand == "B1",
+            "The shared mobile client could not authenticate and decrypt desktop telemetry.");
+    }
+
+    using HttpResponseMessage unauthorized = await client.GetAsync("v1/snapshot");
+    Require(unauthorized.StatusCode == HttpStatusCode.Unauthorized,
+        "The companion endpoint must reject unsigned requests.");
+
+    string timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+    string nonce = CompanionService.Base64Url(RandomNumberGenerator.GetBytes(18));
+    byte[] key = SHA256.HashData(Encoding.UTF8.GetBytes(secret));
+    string signature = CompanionService.Base64Url(HMACSHA256.HashData(
+        key, Encoding.UTF8.GetBytes($"GET\n/v1/snapshot\n{timestamp}\n{nonce}")));
+    using var request = new HttpRequestMessage(HttpMethod.Get, "v1/snapshot");
+    request.Headers.Add("X-NetPulse-Time", timestamp);
+    request.Headers.Add("X-NetPulse-Nonce", nonce);
+    request.Headers.Add("X-NetPulse-Signature", signature);
+    using HttpResponseMessage response = await client.SendAsync(request);
+    Require(response.IsSuccessStatusCode,
+        "A correctly signed companion request should be accepted.");
+    using JsonDocument envelope = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+    byte[] encryptedNonce = CompanionService.FromBase64Url(
+        envelope.RootElement.GetProperty("nonce").GetString()!);
+    byte[] ciphertext = CompanionService.FromBase64Url(
+        envelope.RootElement.GetProperty("ciphertext").GetString()!);
+    byte[] tag = CompanionService.FromBase64Url(
+        envelope.RootElement.GetProperty("tag").GetString()!);
+    byte[] plain = new byte[ciphertext.Length];
+    using (var aes = new AesGcm(key, tag.Length))
+        aes.Decrypt(encryptedNonce, ciphertext, tag, plain);
+    using JsonDocument snapshot = JsonDocument.Parse(plain);
+    Require(snapshot.RootElement.GetProperty("InternetOnline").GetBoolean() &&
+            snapshot.RootElement.GetProperty("Band").GetString() == "B1 + B3",
+        "The encrypted companion payload did not preserve live telemetry.");
+
+    using var replay = new HttpRequestMessage(HttpMethod.Get, "v1/snapshot");
+    replay.Headers.Add("X-NetPulse-Time", timestamp);
+    replay.Headers.Add("X-NetPulse-Nonce", nonce);
+    replay.Headers.Add("X-NetPulse-Signature", signature);
+    using HttpResponseMessage replayResponse = await client.SendAsync(replay);
+    Require(replayResponse.StatusCode == HttpStatusCode.Unauthorized,
+        "A companion nonce must not be accepted twice.");
 }
 
 static void TestSettingsMigration()

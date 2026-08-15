@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <Compile Remove="tests\**\*.cs" />
+    <Compile Remove="mobile\**\*.cs" />
     <AssemblyMetadata Include="Signature" Value="CosmicOlorin 2026 (c)" />
   </ItemGroup>
 
