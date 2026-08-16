@@ -11,7 +11,7 @@ The first implementation is deliberately read-only. `NetPulse.Companion.Core` al
 
 The pairing remains valid until the desktop user selects **Revoke all and regenerate**. It does not expire automatically.
 
-`NetPulse.Companion.App` is the Android 6.0+ UI. Install `NetPulse-Monitor-Companion-Android.apk`, then open **Settings → Mobile companion** on Windows, enable and save the service, and scan its persistent QR code. Both devices must be on the same Wi-Fi/LAN. The phone stores pairing in Android secure storage; **Forget this PC** removes it locally.
+`NetPulse.Companion.App` is the Android 6.0+ UI. Open **Settings → Mobile companion** on Windows. The **DOWNLOAD ANDROID APP** QR downloads the APK directly from that PC over the same Wi-Fi/LAN—no GitHub or external hosting. After installation, scan the separate **PAIR THIS PHONE** QR. Pairing is stored in Android secure storage; **Forget this PC** removes it locally.
 
 The dashboard refreshes once per second and shows Internet state, independent router/LTE state, ping, jitter, packet loss, availability, outages, LTE profile, EARFCN, PCI, CID, signal values and unread-SMS count. Router credentials are never included in the pairing profile or sent to the phone.
 

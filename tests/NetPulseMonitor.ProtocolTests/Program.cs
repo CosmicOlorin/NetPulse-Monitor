@@ -1410,6 +1410,18 @@ static async Task TestCompanionProtocolAsync()
     service.Start(port, secret);
     using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}/") };
 
+    string testApkPath = Path.Combine(AppContext.BaseDirectory, "NetPulse-Monitor-Companion-Android.apk");
+    byte[] testApk = [0x50, 0x4B, 0x03, 0x04, 0x4E, 0x50];
+    await File.WriteAllBytesAsync(testApkPath, testApk);
+    using (HttpResponseMessage download = await client.GetAsync("download/android"))
+    {
+        Require(download.IsSuccessStatusCode &&
+                download.Content.Headers.ContentType?.MediaType == "application/vnd.android.package-archive" &&
+                (await download.Content.ReadAsByteArrayAsync()).SequenceEqual(testApk),
+            "The direct LAN Android download endpoint did not return the APK.");
+    }
+    File.Delete(testApkPath);
+
     PairingProfile parsedProfile = PairingProfile.Parse(service.PairingUri);
     using (var mobileClient = new CompanionClient(
                parsedProfile with { Host = "127.0.0.1" }))

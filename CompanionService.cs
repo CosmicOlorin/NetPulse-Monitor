@@ -142,6 +142,17 @@ internal sealed class CompanionService : IAsyncDisposable
                 await WriteResponseAsync(stream, 200, "application/json", info, cancellationToken);
                 return;
             }
+            if (path == "/download/android")
+            {
+                string apkPath = Path.Combine(AppContext.BaseDirectory, "NetPulse-Monitor-Companion-Android.apk");
+                if (!File.Exists(apkPath))
+                {
+                    await WriteResponseAsync(stream, 404, "application/json", "{\"error\":\"android_app_not_installed\"}", cancellationToken);
+                    return;
+                }
+                await WriteFileResponseAsync(stream, apkPath, cancellationToken);
+                return;
+            }
             if (path != "/v1/snapshot" || !Authorize("GET", path, headers))
             {
                 await WriteResponseAsync(stream, 401, "application/json", "{\"error\":\"unauthorized\"}", cancellationToken);
@@ -218,11 +229,21 @@ internal sealed class CompanionService : IAsyncDisposable
     private static async Task WriteResponseAsync(NetworkStream stream, int status, string contentType, string body, CancellationToken token)
     {
         byte[] payload = Encoding.UTF8.GetBytes(body);
-        string reason = status switch { 200 => "OK", 401 => "Unauthorized", 405 => "Method Not Allowed", _ => "Error" };
+        string reason = status switch { 200 => "OK", 401 => "Unauthorized", 404 => "Not Found", 405 => "Method Not Allowed", _ => "Error" };
         byte[] header = Encoding.ASCII.GetBytes(
             $"HTTP/1.1 {status} {reason}\r\nContent-Type: {contentType}\r\nContent-Length: {payload.Length}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n");
         await stream.WriteAsync(header, token);
         await stream.WriteAsync(payload, token);
+    }
+
+    private static async Task WriteFileResponseAsync(NetworkStream stream, string path, CancellationToken token)
+    {
+        var file = new FileInfo(path);
+        byte[] header = Encoding.ASCII.GetBytes(
+            $"HTTP/1.1 200 OK\r\nContent-Type: application/vnd.android.package-archive\r\nContent-Disposition: attachment; filename=\"NetPulse-Monitor-Companion-Android.apk\"\r\nContent-Length: {file.Length}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n");
+        await stream.WriteAsync(header, token);
+        await using FileStream source = File.OpenRead(path);
+        await source.CopyToAsync(stream, 64 * 1024, token);
     }
 
     internal static string CreatePairingSecret() => Base64Url(RandomNumberGenerator.GetBytes(32));
@@ -230,11 +251,25 @@ internal sealed class CompanionService : IAsyncDisposable
     internal static string BuildPairingUri(int port, string secret) =>
         $"netpulse://pair?host={Uri.EscapeDataString(PreferredLanAddress())}&port={port}&key={Uri.EscapeDataString(secret)}&v=1";
 
+    internal static string BuildAndroidDownloadUri(int port) =>
+        $"http://{PreferredLanAddress()}:{port}/download/android";
+
     private static string PreferredLanAddress()
     {
-        foreach (NetworkInterface adapter in NetworkInterface.GetAllNetworkInterfaces().Where(item => item.OperationalStatus == OperationalStatus.Up))
+        NetworkInterface[] candidates = NetworkInterface.GetAllNetworkInterfaces()
+            .Where(adapter => adapter.OperationalStatus == OperationalStatus.Up &&
+                              adapter.NetworkInterfaceType is NetworkInterfaceType.Wireless80211 or NetworkInterfaceType.Ethernet &&
+                              adapter.GetIPProperties().GatewayAddresses.Any(gateway =>
+                                  gateway.Address.AddressFamily == AddressFamily.InterNetwork &&
+                                  !gateway.Address.Equals(IPAddress.Any)))
+            .OrderBy(adapter => adapter.NetworkInterfaceType == NetworkInterfaceType.Wireless80211 ? 0 : 1)
+            .ThenByDescending(adapter => adapter.Speed)
+            .ToArray();
+        foreach (NetworkInterface adapter in candidates)
         foreach (UnicastIPAddressInformation address in adapter.GetIPProperties().UnicastAddresses)
-            if (address.Address.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(address.Address))
+            if (address.Address.AddressFamily == AddressFamily.InterNetwork &&
+                !IPAddress.IsLoopback(address.Address) &&
+                !address.Address.ToString().StartsWith("169.254.", StringComparison.Ordinal))
                 return address.Address.ToString();
         return "127.0.0.1";
     }
