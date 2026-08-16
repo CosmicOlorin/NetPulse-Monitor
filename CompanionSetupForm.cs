@@ -1,3 +1,5 @@
+using QRCoder;
+
 namespace NetPulseMonitor;
 
 internal sealed class CompanionSetupForm : Form
@@ -5,6 +7,7 @@ internal sealed class CompanionSetupForm : Form
     private readonly CheckBox _enabled = new();
     private readonly NumericUpDown _port = new();
     private readonly TextBox _pairing = new();
+    private readonly PictureBox _qr = new();
     private string _secret;
 
     public bool CompanionEnabled => _enabled.Checked;
@@ -19,18 +22,19 @@ internal sealed class CompanionSetupForm : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
-        ClientSize = new Size(720, 360);
+        ClientSize = new Size(900, 430);
         Font = new Font("Segoe UI", 9F);
 
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             Padding = new Padding(20),
-            ColumnCount = 2,
+            ColumnCount = 3,
             RowCount = 7
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 250));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
@@ -47,7 +51,13 @@ internal sealed class CompanionSetupForm : Form
             TextAlign = ContentAlignment.MiddleLeft
         };
         layout.Controls.Add(title, 0, 0);
-        layout.SetColumnSpan(title, 2);
+        layout.SetColumnSpan(title, 3);
+
+        _qr.Dock = DockStyle.Fill;
+        _qr.SizeMode = PictureBoxSizeMode.Zoom;
+        _qr.Padding = new Padding(12);
+        layout.Controls.Add(_qr, 2, 1);
+        layout.SetRowSpan(_qr, 5);
 
         _enabled.Text = "Allow paired phones on this Wi-Fi/LAN";
         _enabled.Checked = settings.CompanionEnabled;
@@ -107,7 +117,7 @@ internal sealed class CompanionSetupForm : Form
         buttons.Controls.Add(save);
         buttons.Controls.Add(cancel);
         layout.Controls.Add(buttons, 0, 6);
-        layout.SetColumnSpan(buttons, 2);
+        layout.SetColumnSpan(buttons, 3);
         AcceptButton = save;
         CancelButton = cancel;
         Controls.Add(layout);
@@ -118,6 +128,20 @@ internal sealed class CompanionSetupForm : Form
     private void RefreshPairingUri()
     {
         _pairing.Text = CompanionService.BuildPairingUri((int)_port.Value, _secret);
+        using var generator = new QRCodeGenerator();
+        using QRCodeData data = generator.CreateQrCode(_pairing.Text, QRCodeGenerator.ECCLevel.Q);
+        var png = new PngByteQRCode(data);
+        using var stream = new MemoryStream(png.GetGraphic(8));
+        using var image = Image.FromStream(stream);
+        Image? previous = _qr.Image;
+        _qr.Image = new Bitmap(image);
+        previous?.Dispose();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) _qr.Image?.Dispose();
+        base.Dispose(disposing);
     }
 
     private static void AddRow(TableLayoutPanel layout, int row, string caption, Control control)

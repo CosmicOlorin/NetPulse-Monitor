@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml" x:Class="NetPulse.Companion.App.MainPage" BackgroundColor="#111820" Shell.NavBarIsVisible="False">
+  <Grid RowDefinitions="Auto,*" Padding="18,16">
+    <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,14">
+      <VerticalStackLayout Spacing="0"><Label Text="NetPulse Monitor" FontSize="28" FontAttributes="Bold" TextColor="#F3F7FA"/><Label Text="Secure LAN companion" FontSize="13" TextColor="#8FA3B5"/></VerticalStackLayout>
+      <Border Grid.Column="1" BackgroundColor="#183D32" Stroke="#2BAA78" StrokeThickness="1" Padding="12,7"><Label x:Name="ConnectionBadge" Text="NOT PAIRED" FontAttributes="Bold" TextColor="#63D9A7"/></Border>
+    </Grid>
+    <ScrollView Grid.Row="1"><VerticalStackLayout Spacing="14">
+      <Border x:Name="PairingPanel" BackgroundColor="#1B2530" Stroke="#354454" Padding="18"><VerticalStackLayout Spacing="12">
+        <Label Text="Connect to your PC" FontSize="21" FontAttributes="Bold" TextColor="#F3F7FA"/>
+        <Label Text="On the desktop app open Settings → Mobile companion. Scan its QR code or paste the pairing code. Pairing remains valid until you revoke it on the PC." TextColor="#B9C8D4" LineBreakMode="WordWrap"/>
+        <Editor x:Name="PairingCodeEntry" Placeholder="netpulse://pair?..." AutoSize="TextChanges" MinimumHeightRequest="86" BackgroundColor="#10171E" TextColor="#F3F7FA" PlaceholderColor="#657789"/>
+        <Grid ColumnDefinitions="*,*" ColumnSpacing="10"><Button Text="Scan QR" Clicked="OnScanQrClicked" BackgroundColor="#25445E" TextColor="White"/><Button Grid.Column="1" Text="Connect" Clicked="OnConnectClicked" BackgroundColor="#16875D" TextColor="White"/></Grid>
+        <Label x:Name="PairingErrorLabel" TextColor="#FF8A80" IsVisible="False"/>
+      </VerticalStackLayout></Border>
+      <VerticalStackLayout x:Name="DashboardPanel" IsVisible="False" Spacing="12">
+        <Label x:Name="LastUpdateLabel" Text="Waiting for live data…" TextColor="#8FA3B5"/>
+        <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="10">
+          <Border BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><VerticalStackLayout><Label Text="INTERNET" TextColor="#8FA3B5"/><Label x:Name="InternetLabel" Text="—" FontSize="22" FontAttributes="Bold" TextColor="#F3F7FA"/></VerticalStackLayout></Border>
+          <Border Grid.Column="1" BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><VerticalStackLayout><Label Text="ROUTER / LTE" TextColor="#8FA3B5"/><Label x:Name="RouterLabel" Text="—" FontSize="18" FontAttributes="Bold" TextColor="#F3F7FA" LineBreakMode="WordWrap"/></VerticalStackLayout></Border>
+          <Border Grid.Row="1" BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><VerticalStackLayout><Label Text="PING / JITTER" TextColor="#8FA3B5"/><Label x:Name="PingLabel" Text="—" FontSize="20" FontAttributes="Bold" TextColor="#F3F7FA"/></VerticalStackLayout></Border>
+          <Border Grid.Row="1" Grid.Column="1" BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><VerticalStackLayout><Label Text="LOSS / AVAILABILITY" TextColor="#8FA3B5"/><Label x:Name="QualityLabel" Text="—" FontSize="18" FontAttributes="Bold" TextColor="#F3F7FA"/></VerticalStackLayout></Border>
+          <Border Grid.Row="2" BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><VerticalStackLayout><Label Text="LTE PROFILE" TextColor="#8FA3B5"/><Label x:Name="ProfileLabel" Text="—" FontSize="18" FontAttributes="Bold" TextColor="#F3F7FA" LineBreakMode="WordWrap"/></VerticalStackLayout></Border>
+          <Border Grid.Row="2" Grid.Column="1" BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><VerticalStackLayout><Label Text="SIGNAL" TextColor="#8FA3B5"/><Label x:Name="SignalLabel" Text="—" FontSize="15" FontAttributes="Bold" TextColor="#F3F7FA" LineBreakMode="WordWrap"/></VerticalStackLayout></Border>
+        </Grid>
+        <Border BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="7">
+          <Label Text="EARFCN" TextColor="#8FA3B5"/><Label Grid.Column="1" x:Name="EarfcnLabel" Text="—" TextColor="#F3F7FA"/>
+          <Label Grid.Row="1" Text="PCI / CID" TextColor="#8FA3B5"/><Label Grid.Row="1" Grid.Column="1" x:Name="IdentityLabel" Text="—" TextColor="#F3F7FA"/>
+          <Label Grid.Row="2" Text="Outages / unread SMS" TextColor="#8FA3B5"/><Label Grid.Row="2" Grid.Column="1" x:Name="EventsLabel" Text="—" TextColor="#F3F7FA"/>
+        </Grid></Border>
+        <Label x:Name="LiveErrorLabel" TextColor="#FFB86C" IsVisible="False" LineBreakMode="WordWrap"/>
+        <Button Text="Forget this PC" Clicked="OnForgetClicked" BackgroundColor="#3A2630" TextColor="#FFB4B4"/>
+      </VerticalStackLayout>
+    </VerticalStackLayout></ScrollView>
+  </Grid>
+</ContentPage>

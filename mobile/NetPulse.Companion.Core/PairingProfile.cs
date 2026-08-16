@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace NetPulse.Companion;
 
 public sealed record PairingProfile(string Host, int Port, string Secret, int ProtocolVersion)
@@ -22,7 +24,21 @@ public sealed record PairingProfile(string Host, int Port, string Secret, int Pr
                       int.TryParse(versionText, out int parsed) ? parsed : 1;
         if (version != 1)
             throw new NotSupportedException($"NetPulse companion protocol {version} is not supported.");
+        if (!IPAddress.TryParse(host, out IPAddress? address) || !IsPrivateLanAddress(address))
+            throw new FormatException("The pairing code must point to a private local-network IP address.");
         return new PairingProfile(host, port, secret, version);
+    }
+
+    private static bool IsPrivateLanAddress(IPAddress address)
+    {
+        if (IPAddress.IsLoopback(address)) return true;
+        byte[] bytes = address.GetAddressBytes();
+        return bytes.Length == 4 &&
+               (bytes[0] == 10 ||
+                bytes[0] == 127 ||
+                bytes[0] == 192 && bytes[1] == 168 ||
+                bytes[0] == 172 && bytes[1] is >= 16 and <= 31 ||
+                bytes[0] == 169 && bytes[1] == 254);
     }
 
     private static Dictionary<string, string> ParseQuery(string query)

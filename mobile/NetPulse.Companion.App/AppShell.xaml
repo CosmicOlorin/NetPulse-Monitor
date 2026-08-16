@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<Shell x:Class="NetPulse.Companion.App.AppShell" xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml" xmlns:local="clr-namespace:NetPulse.Companion.App" Shell.FlyoutBehavior="Disabled" BackgroundColor="#111820" ForegroundColor="#F3F7FA" Title="NetPulse Monitor">
+  <ShellContent Title="Home" ContentTemplate="{DataTemplate local:MainPage}" Route="MainPage" />
+</Shell>
