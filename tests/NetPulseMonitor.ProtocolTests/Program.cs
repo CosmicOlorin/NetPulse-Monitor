@@ -1406,7 +1406,7 @@ static async Task TestCompanionProtocolAsync()
     await using var service = new CompanionService(() => new CompanionSnapshot(
         DateTime.UtcNow, true, false, 42, 3.5, 0.2, 99.9, 1,
         "connected", true, "4G+ LTE-A", "B1 + B3", "B1", "100", "100",
-        "ABCDE", -95, -10, 12, 2));
+        "ABCDE", -95, -10, 12, 125_000, 250_000, 2));
     service.Start(port, secret);
     using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}/") };
 
@@ -1427,7 +1427,8 @@ static async Task TestCompanionProtocolAsync()
                parsedProfile with { Host = "127.0.0.1" }))
     {
         MobileSnapshot mobileSnapshot = await mobileClient.ReadSnapshotAsync();
-        Require(mobileSnapshot.InternetOnline && mobileSnapshot.PrimaryBand == "B1",
+        Require(mobileSnapshot.InternetOnline && mobileSnapshot.PrimaryBand == "B1" &&
+                mobileSnapshot.UploadBytesPerSecond == 125_000 && mobileSnapshot.DownloadBytesPerSecond == 250_000,
             "The shared mobile client could not authenticate and decrypt desktop telemetry.");
     }
 

@@ -5,10 +5,18 @@ namespace NetPulse.Companion.App;
 public partial class MainPage : ContentPage
 {
     private const string PairingStorageKey = "netpulse-pairing-v1";
+    private const string LiveNotificationPreference = "live-connection-notification";
     private CompanionClient? _client;
     private CancellationTokenSource? _pollCancellation;
     private bool _loaded;
-    public MainPage() => InitializeComponent();
+    private MobileSmsMessage? _selectedSms;
+    private MobileLteProfile? _selectedLte;
+    private int? _lastUnreadCount;
+    public MainPage()
+    {
+        InitializeComponent();
+        LiveNotificationSwitch.IsToggled = Preferences.Default.Get(LiveNotificationPreference, true);
+    }
 
     protected override async void OnAppearing()
     {
@@ -40,12 +48,55 @@ public partial class MainPage : ContentPage
             if (save) await SecureStorage.Default.SetAsync(PairingStorageKey, code);
             PairingPanel.IsVisible = false; DashboardPanel.IsVisible = true; ConnectionBadge.Text = "CONNECTED";
             UpdateDashboard(first); StartPolling();
+            await CheckForUpdateAsync(false);
         }
         catch (Exception ex)
         {
             PairingPanel.IsVisible = true; DashboardPanel.IsVisible = false; ConnectionBadge.Text = "OFFLINE";
             PairingErrorLabel.Text = FriendlyError(ex); PairingErrorLabel.IsVisible = true;
         }
+    }
+
+    private async void OnCheckUpdateClicked(object sender, EventArgs e) => await CheckForUpdateAsync(true);
+
+    private async Task CheckForUpdateAsync(bool userInitiated)
+    {
+        if (_client is null) return;
+        try
+        {
+            UpdateButton.IsEnabled = false;
+            UpdateStatusLabel.Text = "Checking the paired PC…";
+            AndroidAppRelease release = await _client.ReadAndroidAppReleaseAsync();
+            Version installed = Version.Parse(AppInfo.Current.VersionString);
+            Version available = Version.Parse(release.DisplayVersion);
+            if (available <= installed)
+            {
+                UpdateStatusLabel.Text = $"Version {installed} is up to date.";
+                return;
+            }
+
+            UpdateStatusLabel.Text = $"Version {release.DisplayVersion} is available ({release.Size / 1024d / 1024d:0.0} MB).";
+            bool download = await DisplayAlert("NetPulse update", $"Download and install version {release.DisplayVersion}? Android will ask you to confirm installation.", "Update", "Later");
+            if (download)
+            {
+                UpdateProgressBar.Progress = 0;
+                UpdateProgressBar.IsVisible = true;
+                string apkPath = Path.Combine(FileSystem.CacheDirectory, $"NetPulse-{release.DisplayVersion}.apk");
+                var progress = new Progress<double>(value =>
+                {
+                    UpdateProgressBar.Progress = value;
+                    UpdateStatusLabel.Text = $"Downloading version {release.DisplayVersion}… {value:P0}";
+                });
+                await _client.DownloadAndroidUpdateAsync(release, apkPath, progress);
+                UpdateStatusLabel.Text = "Download verified. Confirm installation in Android.";
+                await Launcher.Default.OpenAsync(new OpenFileRequest("Install NetPulse update", new ReadOnlyFile(apkPath)));
+            }
+        }
+        catch (Exception ex)
+        {
+            UpdateStatusLabel.Text = userInitiated ? FriendlyError(ex) : "Automatic update check will retry later.";
+        }
+        finally { UpdateButton.IsEnabled = true; UpdateProgressBar.IsVisible = false; }
     }
 
     private void StartPolling()
@@ -60,12 +111,54 @@ public partial class MainPage : ContentPage
                 {
                     MobileSnapshot snapshot = await _client.ReadSnapshotAsync(token);
                     MainThread.BeginInvokeOnMainThread(() => { LiveErrorLabel.IsVisible = false; ConnectionBadge.Text = "CONNECTED"; UpdateDashboard(snapshot); });
+                    if (snapshot.UnreadSmsCount.GetValueOrDefault() > _lastUnreadCount.GetValueOrDefault()) _ = NotifyNewSmsAsync();
+                    _lastUnreadCount = snapshot.UnreadSmsCount;
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
                 catch (Exception ex) { MainThread.BeginInvokeOnMainThread(() => { ConnectionBadge.Text = "RETRYING"; LiveErrorLabel.Text = FriendlyError(ex); LiveErrorLabel.IsVisible = true; }); }
                 try { await Task.Delay(1000, token); } catch (OperationCanceledException) { break; }
             }
         }, token);
+    }
+
+    private async Task NotifyNewSmsAsync()
+    {
+        if (_client is null) return;
+        try
+        {
+            List<MobileSmsMessage> unread = (await _client.ReadSmsAsync()).Where(message => message.IsUnread).ToList();
+            var notified = Preferences.Default.Get("notified-sms", "").Split('|', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
+            foreach (MobileSmsMessage message in unread.Where(message => !notified.Contains(message.Identity)))
+            {
+                ShowSmsNotification(message);
+                notified.Add(message.Identity);
+            }
+            Preferences.Default.Set("notified-sms", string.Join('|', notified.TakeLast(500)));
+        }
+        catch { }
+    }
+
+    private static void ShowSmsNotification(MobileSmsMessage message)
+    {
+#if ANDROID
+        const string channelId = "netpulse_sms";
+        Android.Content.Context context = Android.App.Application.Context;
+        var manager = (Android.App.NotificationManager?)context.GetSystemService(Android.Content.Context.NotificationService);
+        if (manager is null) return;
+        Android.App.Notification.Builder builder;
+        if (Android.OS.Build.VERSION.SdkInt >= Android.OS.BuildVersionCodes.O)
+        {
+            manager.CreateNotificationChannel(new Android.App.NotificationChannel(channelId, "Router SMS", Android.App.NotificationImportance.High));
+            builder = new Android.App.Notification.Builder(context, channelId);
+        }
+        else
+            builder = new Android.App.Notification.Builder(context);
+        builder.SetContentTitle(message.Address)
+            .SetContentText(message.Content)
+            .SetSmallIcon(Android.Resource.Drawable.IcDialogEmail)
+            .SetAutoCancel(true);
+        manager.Notify(StringComparer.Ordinal.GetHashCode(message.Identity), builder.Build());
+#endif
     }
 
     private void UpdateDashboard(MobileSnapshot s)
@@ -80,6 +173,149 @@ public partial class MainPage : ContentPage
         SignalLabel.Text = $"RSRP {Value(s.RsrpDbm, "dBm")} · RSRQ {Value(s.RsrqDb, "dB")} · SNR {Value(s.SnrDb, "dB")}";
         EarfcnLabel.Text = Empty(s.Earfcn); IdentityLabel.Text = $"{Empty(s.Pci)} / {Empty(s.CellId)}";
         EventsLabel.Text = $"{s.Outages} / {(s.UnreadSmsCount?.ToString() ?? "—")}";
+        if (LiveNotificationSwitch.IsToggled) ShowLiveConnectionNotification(s);
+    }
+
+    private static string Rate(long? bytesPerSecond)
+    {
+        if (!bytesPerSecond.HasValue) return "—";
+        double bits = Math.Max(0, bytesPerSecond.Value) * 8d;
+        return bits >= 1_000_000 ? $"{bits / 1_000_000:0.##} Mbps" : $"{bits / 1_000:0.#} Kbps";
+    }
+
+    private async void OnLiveNotificationToggled(object sender, ToggledEventArgs e)
+    {
+        Preferences.Default.Set(LiveNotificationPreference, e.Value);
+#if ANDROID
+        if (!e.Value)
+        {
+            Android.Content.Context context = Android.App.Application.Context;
+            var manager = (Android.App.NotificationManager?)context.GetSystemService(Android.Content.Context.NotificationService);
+            manager?.Cancel(17011);
+            return;
+        }
+        if (Android.OS.Build.VERSION.SdkInt >= Android.OS.BuildVersionCodes.Tiramisu)
+            await Permissions.RequestAsync<Permissions.PostNotifications>();
+#endif
+    }
+
+    private static void ShowLiveConnectionNotification(MobileSnapshot snapshot)
+    {
+#if ANDROID
+        const string channelId = "netpulse_live";
+        Android.Content.Context context = Android.App.Application.Context;
+        var manager = (Android.App.NotificationManager?)context.GetSystemService(Android.Content.Context.NotificationService);
+        if (manager is null) return;
+        Android.App.Notification.Builder builder;
+        if (Android.OS.Build.VERSION.SdkInt >= Android.OS.BuildVersionCodes.O)
+        {
+            var channel = new Android.App.NotificationChannel(channelId, "Live connection", Android.App.NotificationImportance.Low);
+            channel.SetSound(null, null);
+            manager.CreateNotificationChannel(channel);
+            builder = new Android.App.Notification.Builder(context, channelId);
+        }
+        else
+            builder = new Android.App.Notification.Builder(context);
+        string title = $"↓ {Rate(snapshot.DownloadBytesPerSecond)}   ↑ {Rate(snapshot.UploadBytesPerSecond)}";
+        string detail = $"Ping {Value(snapshot.PingMs, "ms")}  ·  LTE {Empty(snapshot.Band)}";
+        builder.SetContentTitle(title)
+            .SetContentText(detail)
+            .SetStyle(new Android.App.Notification.BigTextStyle().BigText(detail))
+            .SetSmallIcon(Android.Resource.Drawable.IcMenuInfoDetails)
+            .SetOnlyAlertOnce(true)
+            .SetOngoing(true)
+            .SetShowWhen(false);
+        manager.Notify(17011, builder.Build());
+#endif
+    }
+
+    private void ShowSection(View section)
+    {
+        StatusContent.IsVisible = section == StatusContent;
+        SmsContent.IsVisible = section == SmsContent;
+        LteContent.IsVisible = section == LteContent;
+    }
+
+    private void OnStatusTabClicked(object sender, EventArgs e) => ShowSection(StatusContent);
+    private async void OnSmsTabClicked(object sender, EventArgs e) { ShowSection(SmsContent); await RefreshSmsAsync(); }
+    private async void OnLteTabClicked(object sender, EventArgs e) { ShowSection(LteContent); await RefreshLteAsync(); }
+    private async void OnRefreshSmsClicked(object sender, EventArgs e) => await RefreshSmsAsync();
+    private async void OnRefreshLteClicked(object sender, EventArgs e) => await RefreshLteAsync();
+
+    private async Task RefreshSmsAsync()
+    {
+        if (_client is null) return;
+        try { SmsStatusLabel.Text = "Loading…"; SmsList.ItemsSource = (await _client.ReadSmsAsync()).OrderByDescending(x => x.Timestamp).ToList(); SmsStatusLabel.Text = ""; }
+        catch (Exception ex) { SmsStatusLabel.Text = FriendlyError(ex); }
+    }
+
+    private void OnSmsSelected(object sender, SelectionChangedEventArgs e)
+    {
+        _selectedSms = e.CurrentSelection.FirstOrDefault() as MobileSmsMessage;
+        if (_selectedSms is null) return;
+        SelectedSmsText.Text = _selectedSms.Content;
+        SmsPhoneEntry.Text = _selectedSms.Address;
+    }
+
+    private async void OnMarkReadClicked(object sender, EventArgs e)
+    {
+        if (_client is null || _selectedSms is null) return;
+        try { await _client.SetSmsUnreadAsync(_selectedSms, false); await RefreshSmsAsync(); }
+        catch (Exception ex) { SmsStatusLabel.Text = FriendlyError(ex); }
+    }
+
+    private async void OnDeleteSmsClicked(object sender, EventArgs e)
+    {
+        if (_client is null || _selectedSms is null || !await DisplayAlert("Delete SMS", "Delete this message from the router?", "Delete", "Cancel")) return;
+        try { await _client.DeleteSmsAsync(_selectedSms); _selectedSms = null; SelectedSmsText.Text = "Select a message"; await RefreshSmsAsync(); }
+        catch (Exception ex) { SmsStatusLabel.Text = FriendlyError(ex); }
+    }
+
+    private async void OnSendSmsClicked(object sender, EventArgs e)
+    {
+        if (_client is null || string.IsNullOrWhiteSpace(SmsPhoneEntry.Text) || string.IsNullOrWhiteSpace(SmsBodyEntry.Text)) return;
+        if (!await DisplayAlert("Send SMS", $"Send this message to {SmsPhoneEntry.Text.Trim()}?", "Send", "Cancel")) return;
+        try { SmsStatusLabel.Text = "Sending…"; await _client.SendSmsAsync(SmsPhoneEntry.Text.Trim(), SmsBodyEntry.Text); SmsBodyEntry.Text = ""; SmsStatusLabel.Text = "Sent."; await RefreshSmsAsync(); }
+        catch (Exception ex) { SmsStatusLabel.Text = FriendlyError(ex); }
+    }
+
+    private async Task RefreshLteAsync()
+    {
+        if (_client is null) return;
+        try { LteStatusLabel.Text = "Loading…"; LteList.ItemsSource = await _client.ReadLteHistoryAsync(); LteStatusLabel.Text = ""; }
+        catch (Exception ex) { LteStatusLabel.Text = FriendlyError(ex); }
+    }
+
+    private void OnLteSelected(object sender, SelectionChangedEventArgs e)
+    {
+        _selectedLte = e.CurrentSelection.FirstOrDefault() as MobileLteProfile;
+        if (_selectedLte is null) return;
+        BandsEntry.Text = string.Join(",", _selectedLte.Band.Split('+').Select(value => value.Trim().TrimStart('B', 'b')));
+        LockEarfcnEntry.Text = _selectedLte.Earfcn; LockPciEntry.Text = _selectedLte.Pci; LockCidEntry.Text = _selectedLte.CellId;
+    }
+
+    private async void OnApplyLockClicked(object sender, EventArgs e)
+    {
+        if (_client is null) return;
+        int[] bands = (BandsEntry.Text ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(value => int.TryParse(value.TrimStart('B', 'b'), out int band) ? band : 0).Where(value => value > 0).ToArray();
+        if (bands.Length == 0) { LteStatusLabel.Text = "Enter at least one LTE band."; return; }
+        if (!await DisplayAlert("Apply LTE lock", "The router connection may briefly disconnect. Apply this band/cell lock?", "Apply", "Cancel")) return;
+        try { LteStatusLabel.Text = "Applying…"; await _client.ApplyLteLockAsync(bands, LockEarfcnEntry.Text ?? "", LockPciEntry.Text ?? "", LockCidEntry.Text); LteStatusLabel.Text = "Lock applied."; }
+        catch (Exception ex) { LteStatusLabel.Text = FriendlyError(ex); }
+    }
+
+    private async void OnRestoreAutomaticClicked(object sender, EventArgs e)
+    {
+        if (_client is null || !await DisplayAlert("Restore automatic", "Return the router to automatic cell and band selection?", "Restore", "Cancel")) return;
+        try { LteStatusLabel.Text = "Restoring…"; await _client.RestoreAutomaticAsync(); LteStatusLabel.Text = "Automatic selection restored."; }
+        catch (Exception ex) { LteStatusLabel.Text = FriendlyError(ex); }
+    }
+
+    private async void OnRestartRouterClicked(object sender, EventArgs e)
+    {
+        if (_client is null || !await DisplayAlert("Restart router", "Restart the TP-Link router now? Internet and Companion access will be unavailable for several minutes.", "Restart", "Cancel")) return;
+        try { LteStatusLabel.Text = "Restarting router…"; await _client.RebootRouterAsync(); LteStatusLabel.Text = "Restart requested. Waiting for the router to return…"; }
+        catch (Exception ex) { LteStatusLabel.Text = FriendlyError(ex); }
     }
 
     private void OnForgetClicked(object sender, EventArgs e)

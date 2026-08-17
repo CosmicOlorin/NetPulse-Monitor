@@ -14,6 +14,12 @@
         <Label x:Name="PairingErrorLabel" TextColor="#FF8A80" IsVisible="False"/>
       </VerticalStackLayout></Border>
       <VerticalStackLayout x:Name="DashboardPanel" IsVisible="False" Spacing="12">
+        <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
+          <Button Text="Status" Clicked="OnStatusTabClicked" BackgroundColor="#25445E" TextColor="White"/>
+          <Button Grid.Column="1" Text="SMS" Clicked="OnSmsTabClicked" BackgroundColor="#25445E" TextColor="White"/>
+          <Button Grid.Column="2" Text="LTE control" Clicked="OnLteTabClicked" BackgroundColor="#25445E" TextColor="White"/>
+        </Grid>
+        <VerticalStackLayout x:Name="StatusContent" Spacing="12">
         <Label x:Name="LastUpdateLabel" Text="Waiting for live data…" TextColor="#8FA3B5"/>
         <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="10">
           <Border BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><VerticalStackLayout><Label Text="INTERNET" TextColor="#8FA3B5"/><Label x:Name="InternetLabel" Text="—" FontSize="22" FontAttributes="Bold" TextColor="#F3F7FA"/></VerticalStackLayout></Border>
@@ -29,6 +35,36 @@
           <Label Grid.Row="2" Text="Outages / unread SMS" TextColor="#8FA3B5"/><Label Grid.Row="2" Grid.Column="1" x:Name="EventsLabel" Text="—" TextColor="#F3F7FA"/>
         </Grid></Border>
         <Label x:Name="LiveErrorLabel" TextColor="#FFB86C" IsVisible="False" LineBreakMode="WordWrap"/>
+        <Border BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><VerticalStackLayout Spacing="8">
+          <Label Text="COMPANION APP" TextColor="#8FA3B5"/>
+          <Label x:Name="UpdateStatusLabel" Text="Updates are checked through the paired PC." TextColor="#B9C8D4" LineBreakMode="WordWrap"/>
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10"><Label Text="Live connection notification" TextColor="#F3F7FA" VerticalTextAlignment="Center"/><Switch Grid.Column="1" x:Name="LiveNotificationSwitch" Toggled="OnLiveNotificationToggled" OnColor="#2BAA78"/></Grid>
+          <ProgressBar x:Name="UpdateProgressBar" IsVisible="False" Progress="0" ProgressColor="#2BAA78"/>
+          <Button x:Name="UpdateButton" Text="Check for app update" Clicked="OnCheckUpdateClicked" BackgroundColor="#25445E" TextColor="White"/>
+        </VerticalStackLayout></Border>
+        </VerticalStackLayout>
+        <VerticalStackLayout x:Name="SmsContent" IsVisible="False" Spacing="10">
+          <Grid ColumnDefinitions="*,Auto"><Label Text="SMS conversations" FontSize="21" FontAttributes="Bold" TextColor="#F3F7FA"/><Button Grid.Column="1" Text="Refresh" Clicked="OnRefreshSmsClicked"/></Grid>
+          <CollectionView x:Name="SmsList" SelectionMode="Single" SelectionChanged="OnSmsSelected" HeightRequest="300">
+            <CollectionView.ItemTemplate><DataTemplate><Border BackgroundColor="#1B2530" Stroke="#354454" Padding="10" Margin="0,3"><VerticalStackLayout><Label Text="{Binding DisplayAddress}" FontAttributes="Bold" TextColor="#F3F7FA"/><Label Text="{Binding Content}" MaxLines="2" TextColor="#B9C8D4"/><Label Text="{Binding TimeText}" FontSize="11" TextColor="#8FA3B5"/></VerticalStackLayout></Border></DataTemplate></CollectionView.ItemTemplate>
+          </CollectionView>
+          <Label x:Name="SelectedSmsText" Text="Select a message" TextColor="#F3F7FA" LineBreakMode="WordWrap"/>
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="8"><Button Text="Mark read" Clicked="OnMarkReadClicked"/><Button Grid.Column="1" Text="Delete" Clicked="OnDeleteSmsClicked" BackgroundColor="#5A2730" TextColor="White"/></Grid>
+          <Entry x:Name="SmsPhoneEntry" Placeholder="Phone number" BackgroundColor="#10171E" TextColor="#F3F7FA"/>
+          <Editor x:Name="SmsBodyEntry" Placeholder="Write a message" MinimumHeightRequest="100" BackgroundColor="#10171E" TextColor="#F3F7FA"/>
+          <Button Text="Send SMS" Clicked="OnSendSmsClicked" BackgroundColor="#16875D" TextColor="White"/>
+          <Label x:Name="SmsStatusLabel" TextColor="#FFB86C"/>
+        </VerticalStackLayout>
+        <VerticalStackLayout x:Name="LteContent" IsVisible="False" Spacing="10">
+          <Grid ColumnDefinitions="*,Auto"><Label Text="LTE history and cell lock" FontSize="21" FontAttributes="Bold" TextColor="#F3F7FA"/><Button Grid.Column="1" Text="Refresh" Clicked="OnRefreshLteClicked"/></Grid>
+          <CollectionView x:Name="LteList" SelectionMode="Single" SelectionChanged="OnLteSelected" HeightRequest="260"><CollectionView.ItemTemplate><DataTemplate><Border BackgroundColor="#1B2530" Stroke="#354454" Padding="10" Margin="0,3"><Grid ColumnDefinitions="Auto,*" ColumnSpacing="14"><Label Text="{Binding Band}" FontAttributes="Bold" TextColor="#F3F7FA"/><Label Grid.Column="1" Text="{Binding IdentitySummary}" HorizontalTextAlignment="End" LineBreakMode="TailTruncation" TextColor="#B9C8D4"/></Grid></Border></DataTemplate></CollectionView.ItemTemplate></CollectionView>
+          <Entry x:Name="BandsEntry" Placeholder="Bands, e.g. 3,20" BackgroundColor="#10171E" TextColor="#F3F7FA"/>
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="8"><Entry x:Name="LockEarfcnEntry" Placeholder="EARFCN" BackgroundColor="#10171E" TextColor="#F3F7FA"/><Entry Grid.Column="1" x:Name="LockPciEntry" Placeholder="PCI" BackgroundColor="#10171E" TextColor="#F3F7FA"/></Grid>
+          <Entry x:Name="LockCidEntry" Placeholder="CID (optional, decimal or hex)" BackgroundColor="#10171E" TextColor="#F3F7FA"/>
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="8"><Button Text="Apply lock" Clicked="OnApplyLockClicked" BackgroundColor="#A36A00" TextColor="White"/><Button Grid.Column="1" Text="Restore automatic" Clicked="OnRestoreAutomaticClicked" BackgroundColor="#16875D" TextColor="White"/></Grid>
+          <Button Text="Restart router" Clicked="OnRestartRouterClicked" BackgroundColor="#8A3030" TextColor="White"/>
+          <Label x:Name="LteStatusLabel" TextColor="#FFB86C"/>
+        </VerticalStackLayout>
         <Button Text="Forget this PC" Clicked="OnForgetClicked" BackgroundColor="#3A2630" TextColor="#FFB4B4"/>
       </VerticalStackLayout>
     </VerticalStackLayout></ScrollView>

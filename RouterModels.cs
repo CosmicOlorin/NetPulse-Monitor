@@ -203,6 +203,11 @@ internal interface IRouterSmsProvider
         CancellationToken cancellationToken);
 }
 
+internal interface IRouterRebootProvider
+{
+    Task RebootRouterAsync(CancellationToken cancellationToken);
+}
+
 internal class RouterConnectionException : Exception
 {
     public RouterConnectionException(string message) : base(message) { }

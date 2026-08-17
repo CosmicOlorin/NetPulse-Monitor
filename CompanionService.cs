@@ -27,7 +27,13 @@ internal sealed record CompanionSnapshot(
     double? RsrpDbm,
     double? RsrqDb,
     double? SnrDb,
+    long? UploadBytesPerSecond,
+    long? DownloadBytesPerSecond,
     int? UnreadSmsCount);
+
+internal sealed record CompanionSmsAction(string Stack, string Index, int PageNumber, string Folder, bool Unread);
+internal sealed record CompanionSmsSend(string PhoneNumber, string Content);
+internal sealed record CompanionLockRequest(int[] Bands, string Earfcn, string Pci, string? CellId);
 
 internal sealed class CompanionService : IAsyncDisposable
 {
@@ -36,6 +42,10 @@ internal sealed class CompanionService : IAsyncDisposable
     private static readonly TimeSpan AllowedClockSkew = TimeSpan.FromMinutes(5);
 
     private readonly Func<CompanionSnapshot> _snapshotFactory;
+    private readonly RouterMonitor? _routerMonitor;
+    private readonly LteCellHistoryStore? _cellHistory;
+    private readonly Func<IReadOnlyDictionary<string, string>> _contactsFactory;
+    private readonly SemaphoreSlim _operationGate = new(1, 1);
     private readonly object _nonceGate = new();
     private readonly Dictionary<string, DateTime> _usedNonces = new(StringComparer.Ordinal);
     private CancellationTokenSource? _cancellation;
@@ -49,8 +59,19 @@ internal sealed class CompanionService : IAsyncDisposable
     public int Port { get; private set; } = DefaultPort;
     public string PairingUri { get; private set; } = "";
 
-    public CompanionService(Func<CompanionSnapshot> snapshotFactory) =>
+    public CompanionService(Func<CompanionSnapshot> snapshotFactory, RouterMonitor routerMonitor, LteCellHistoryStore cellHistory, Func<IReadOnlyDictionary<string, string>> contactsFactory)
+    {
         _snapshotFactory = snapshotFactory;
+        _routerMonitor = routerMonitor;
+        _cellHistory = cellHistory;
+        _contactsFactory = contactsFactory;
+    }
+
+    internal CompanionService(Func<CompanionSnapshot> snapshotFactory)
+    {
+        _snapshotFactory = snapshotFactory;
+        _contactsFactory = () => new Dictionary<string, string>();
+    }
 
     public void Start(int port, string pairingSecret)
     {
@@ -130,12 +151,32 @@ internal sealed class CompanionService : IAsyncDisposable
             }
 
             string[] request = requestLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (request.Length < 2 || request[0] != "GET")
+            if (request.Length < 2 || request[0] is not ("GET" or "POST"))
             {
                 await WriteResponseAsync(stream, 405, "application/json", "{\"error\":\"method_not_allowed\"}", cancellationToken);
                 return;
             }
+            string method = request[0];
             string path = request[1].Split('?', 2)[0];
+            string body = "";
+            if (method == "POST")
+            {
+                if (!headers.TryGetValue("Content-Length", out string? lengthText) ||
+                    !int.TryParse(lengthText, out int length) || length < 0 || length > 64 * 1024)
+                {
+                    await WriteResponseAsync(stream, 400, "application/json", "{\"error\":\"invalid_body\"}", cancellationToken);
+                    return;
+                }
+                char[] content = new char[length];
+                int read = 0;
+                while (read < length)
+                {
+                    int count = await reader.ReadAsync(content.AsMemory(read, length - read), cancellationToken);
+                    if (count == 0) break;
+                    read += count;
+                }
+                body = new string(content, 0, read);
+            }
             if (path == "/v1/info")
             {
                 string info = JsonSerializer.Serialize(new { name = "NetPulse Monitor", protocol = 1, port = Port });
@@ -153,13 +194,67 @@ internal sealed class CompanionService : IAsyncDisposable
                 await WriteFileResponseAsync(stream, apkPath, cancellationToken);
                 return;
             }
-            if (path != "/v1/snapshot" || !Authorize("GET", path, headers))
+            if (path == "/v1/app/android")
+            {
+                string apkPath = Path.Combine(AppContext.BaseDirectory, "NetPulse-Monitor-Companion-Android.apk");
+                if (!File.Exists(apkPath))
+                {
+                    await WriteResponseAsync(stream, 404, "application/json", "{\"error\":\"android_app_not_installed\"}", cancellationToken);
+                    return;
+                }
+                var apk = new FileInfo(apkPath);
+                string sha256;
+                await using (FileStream source = File.OpenRead(apkPath))
+                    sha256 = Convert.ToHexString(await SHA256.HashDataAsync(source, cancellationToken));
+                string info = JsonSerializer.Serialize(new
+                {
+                    displayVersion = "1.0.12",
+                    versionCode = 6,
+                    size = apk.Length,
+                    sha256,
+                    downloadPath = "/download/android"
+                });
+                await WriteResponseAsync(stream, 200, "application/json", info, cancellationToken);
+                return;
+            }
+            if (!Authorize(method, path, headers, body))
             {
                 await WriteResponseAsync(stream, 401, "application/json", "{\"error\":\"unauthorized\"}", cancellationToken);
                 return;
             }
 
-            byte[] plain = JsonSerializer.SerializeToUtf8Bytes(_snapshotFactory());
+            try
+            {
+                object result = path switch
+                {
+                    "/v1/snapshot" when method == "GET" => _snapshotFactory(),
+                    "/v1/sms" when method == "GET" => await ReadSmsAsync(cancellationToken),
+                    "/v1/contacts" when method == "GET" => _contactsFactory(),
+                    "/v1/sms/unread" when method == "POST" => await SetSmsUnreadAsync(body, cancellationToken),
+                    "/v1/sms/delete" when method == "POST" => await DeleteSmsAsync(body, cancellationToken),
+                    "/v1/sms/send" when method == "POST" => await SendSmsAsync(body, cancellationToken),
+                    "/v1/lte/history" when method == "GET" => RequireHistory().GetHistoryRecommendations(),
+                    "/v1/lte/lock" when method == "POST" => await ApplyLockAsync(body, cancellationToken),
+                    "/v1/lte/automatic" when method == "POST" => await RestoreAutomaticAsync(cancellationToken),
+                    "/v1/router/reboot" when method == "POST" => await RebootRouterAsync(cancellationToken),
+                    _ => throw new FileNotFoundException()
+                };
+                await WriteEncryptedResponseAsync(stream, result, cancellationToken);
+            }
+            catch (FileNotFoundException)
+            {
+                await WriteResponseAsync(stream, 404, "application/json", "{\"error\":\"not_found\"}", cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                await WriteResponseAsync(stream, 409, "application/json", JsonSerializer.Serialize(new { error = "operation_failed", message = ex.Message }), cancellationToken);
+            }
+        }
+    }
+
+    private async Task WriteEncryptedResponseAsync(NetworkStream stream, object value, CancellationToken cancellationToken)
+    {
+            byte[] plain = JsonSerializer.SerializeToUtf8Bytes(value);
             byte[] nonce = RandomNumberGenerator.GetBytes(12);
             byte[] cipher = new byte[plain.Length];
             byte[] tag = new byte[16];
@@ -173,10 +268,69 @@ internal sealed class CompanionService : IAsyncDisposable
                 tag = Base64Url(tag)
             });
             await WriteResponseAsync(stream, 200, "application/netpulse+json", envelope, cancellationToken);
-        }
     }
 
-    private bool Authorize(string method, string path, Dictionary<string, string> headers)
+    private async Task<object> ReadSmsAsync(CancellationToken token) =>
+        (await RequireRouter().ReadSmsTimelineAsync(token)).Select(message => new
+        {
+            message.Stack, message.Index, message.PageNumber, message.Address, message.Content,
+            message.TimeText, message.Timestamp, Folder = message.Folder.ToString(), message.IsUnread, message.Identity
+        }).ToArray();
+
+    private async Task<object> SetSmsUnreadAsync(string body, CancellationToken token)
+    {
+        CompanionSmsAction action = JsonSerializer.Deserialize<CompanionSmsAction>(body) ?? throw new InvalidDataException("Invalid SMS action.");
+        await SerializedAsync(() => RequireRouter().SetSmsUnreadAsync(action.Stack, action.Index, action.PageNumber, action.Unread, token), token);
+        return new { ok = true };
+    }
+
+    private async Task<object> DeleteSmsAsync(string body, CancellationToken token)
+    {
+        CompanionSmsAction action = JsonSerializer.Deserialize<CompanionSmsAction>(body) ?? throw new InvalidDataException("Invalid SMS action.");
+        if (!Enum.TryParse(action.Folder, true, out RouterSmsFolder folder)) throw new InvalidDataException("Invalid SMS folder.");
+        await SerializedAsync(() => RequireRouter().DeleteSmsAsync(folder, action.Stack, action.Index, action.PageNumber, token), token);
+        return new { ok = true };
+    }
+
+    private async Task<object> SendSmsAsync(string body, CancellationToken token)
+    {
+        CompanionSmsSend request = JsonSerializer.Deserialize<CompanionSmsSend>(body) ?? throw new InvalidDataException("Invalid SMS request.");
+        if (string.IsNullOrWhiteSpace(request.PhoneNumber) || string.IsNullOrWhiteSpace(request.Content)) throw new InvalidDataException("Phone number and message are required.");
+        await SerializedAsync(() => RequireRouter().SendSmsAsync(request.PhoneNumber.Trim(), request.Content, token), token);
+        return new { ok = true };
+    }
+
+    private async Task<object> ApplyLockAsync(string body, CancellationToken token)
+    {
+        CompanionLockRequest request = JsonSerializer.Deserialize<CompanionLockRequest>(body) ?? throw new InvalidDataException("Invalid LTE lock request.");
+        if (request.Bands.Length == 0 || request.Bands.Any(band => band is < 1 or > 261)) throw new InvalidDataException("At least one valid LTE band is required.");
+        var target = new RouterCellLockTarget { Bands = request.Bands.Distinct().ToArray(), Earfcn = request.Earfcn.Trim(), Pci = request.Pci.Trim(), CellId = request.CellId?.Trim() };
+        await SerializedAsync(() => RequireRouter().ApplyCellAndBandLockAsync(target, token), token);
+        return new { ok = true };
+    }
+
+    private async Task<object> RestoreAutomaticAsync(CancellationToken token)
+    {
+        await SerializedAsync(() => RequireRouter().RestoreAutomaticSelectionAsync(token), token);
+        return new { ok = true };
+    }
+
+    private async Task<object> RebootRouterAsync(CancellationToken token)
+    {
+        await SerializedAsync(() => RequireRouter().RebootRouterAsync(token), token);
+        return new { ok = true };
+    }
+
+    private async Task SerializedAsync(Func<Task> action, CancellationToken token)
+    {
+        await _operationGate.WaitAsync(token);
+        try { await action(); } finally { _operationGate.Release(); }
+    }
+
+    private RouterMonitor RequireRouter() => _routerMonitor ?? throw new NotSupportedException("Router controls are not available.");
+    private LteCellHistoryStore RequireHistory() => _cellHistory ?? throw new NotSupportedException("LTE history is not available.");
+
+    private bool Authorize(string method, string path, Dictionary<string, string> headers, string body)
     {
         if (!headers.TryGetValue("X-NetPulse-Time", out string? timeText) ||
             !headers.TryGetValue("X-NetPulse-Nonce", out string? nonce) ||
@@ -189,8 +343,10 @@ internal sealed class CompanionService : IAsyncDisposable
         DateTime now = DateTime.UtcNow;
         if ((now - timestamp).Duration() > AllowedClockSkew || !RememberNonce(nonce, now))
             return false;
-        byte[] expected = HMACSHA256.HashData(
-            _key, Encoding.UTF8.GetBytes($"{method}\n{path}\n{timeText}\n{nonce}"));
+        string payload = $"{method}\n{path}\n{timeText}\n{nonce}";
+        if (body.Length > 0)
+            payload += "\n" + Base64Url(SHA256.HashData(Encoding.UTF8.GetBytes(body)));
+        byte[] expected = HMACSHA256.HashData(_key, Encoding.UTF8.GetBytes(payload));
         byte[] actual;
         try { actual = FromBase64Url(supplied); } catch (FormatException) { return false; }
         return actual.Length == expected.Length && CryptographicOperations.FixedTimeEquals(actual, expected);

@@ -183,6 +183,18 @@ internal sealed class RouterMonitor : IDisposable
             cancellationToken);
     }
 
+    public async Task RebootRouterAsync(CancellationToken cancellationToken = default)
+    {
+        await WithRebootProviderAsync(
+            async provider =>
+            {
+                await provider.RebootRouterAsync(cancellationToken);
+                return true;
+            },
+            cancellationToken);
+        SetManagementState(RouterManagementState.Reconnecting);
+    }
+
     public Task<RouterMobileNetworkModeState> ReadMobileNetworkModeAsync(
         CancellationToken cancellationToken = default) =>
         WithMobileNetworkModeProviderAsync(
@@ -472,6 +484,26 @@ internal sealed class RouterMonitor : IDisposable
             return await ExecuteWithReconnectUnsafeAsync(
                 provider => provider as IRouterSmsProvider,
                 "This router provider does not support SMS.",
+                operation,
+                cancellationToken);
+        }
+        finally
+        {
+            _providerGate.Release();
+        }
+    }
+
+    private async Task<T> WithRebootProviderAsync<T>(
+        Func<IRouterRebootProvider, Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        await _providerGate.WaitAsync(cancellationToken);
+        try
+        {
+            return await ExecuteWithReconnectUnsafeAsync(
+                provider => provider as IRouterRebootProvider,
+                "This router provider does not support remote restart.",
                 operation,
                 cancellationToken);
         }

@@ -185,7 +185,8 @@ internal sealed class MainForm : Form
         _routerPassword = ReadProtectedRouterPassword();
         _engine = CreateEngine();
         _routerMonitor = CreateRouterMonitor();
-        _companionService = new CompanionService(CreateCompanionSnapshot);
+        _companionService = new CompanionService(CreateCompanionSnapshot, _routerMonitor, _cellHistory,
+            () => new Dictionary<string, string>(_settings.SmsContacts, StringComparer.Ordinal));
 
         AutoScaleMode = AutoScaleMode.Dpi;
         Text = "NetPulse Monitor";
@@ -871,6 +872,16 @@ internal sealed class MainForm : Form
         };
         controls.Controls.Add(configureButton);
         controls.Controls.Add(refreshButton);
+        var rebootButton = new Button { Text = "Restart router", Size = new Size(145, 38) };
+        rebootButton.Click += async (_, _) =>
+        {
+            if (MessageBox.Show("Restart the TP-Link router now? Internet access will be unavailable for several minutes.", "Restart router", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+            rebootButton.Enabled = false;
+            try { await _routerMonitor.RebootRouterAsync(); }
+            catch (Exception ex) { MessageBox.Show(ex.Message, "Restart router", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+            finally { rebootButton.Enabled = true; }
+        };
+        controls.Controls.Add(rebootButton);
         controls.Controls.Add(privacyLabel);
 
         layout.Controls.Add(statusPanel, 0, 0);
@@ -994,7 +1005,7 @@ internal sealed class MainForm : Form
                 await RunCellExperimentAsync();
         };
 
-        _bandDiscoveryButton.Text = "Scan bands && cells";
+        _bandDiscoveryButton.Text = "Scan bands & cells";
         _bandDiscoveryButton.UseMnemonic = false;
         _bandDiscoveryButton.Size = new Size(220, 40);
         _bandDiscoveryButton.Click += async (_, _) =>
@@ -2324,6 +2335,7 @@ internal sealed class MainForm : Form
         if (!force && revision == _lastCellHistoryRevision &&
             period == _lastCellHistoryPeriod)
             return;
+        bool periodChanged = period != _lastCellHistoryPeriod;
         _lastCellHistoryRevision = revision;
         _lastCellHistoryPeriod = period;
 
@@ -2343,6 +2355,12 @@ internal sealed class MainForm : Form
         IReadOnlyList<LteCellRecommendation> history = allHistory
             .Where(LteCellHistoryStore.IsVisibleToUser)
             .ToArray();
+        if (periodChanged)
+        {
+            _collapsedTimePeriodGroups.Clear();
+            foreach (int otherPeriod in history.Select(item => item.PeriodId).Distinct().Where(value => value != period))
+                _collapsedTimePeriodGroups.Add(otherPeriod);
+        }
         string? activeProfileKey = _cellHistory.GetActiveProfileKey();
         bool shortProfilesHidden =
             allCurrentRecommendations.Count > currentRecommendations.Count ||
@@ -5279,7 +5297,7 @@ internal sealed class MainForm : Form
             _cellLockBusy = false;
             _bandDiscoveryCancellation.Dispose();
             _bandDiscoveryCancellation = null;
-            _bandDiscoveryButton.Text = "Scan bands && cells";
+            _bandDiscoveryButton.Text = "Scan bands & cells";
             _bandDiscoveryButton.Enabled = true;
             _experimentButton.Enabled = true;
             _speedButton.Enabled = true;
@@ -6394,6 +6412,8 @@ internal sealed class MainForm : Form
             router.RsrpDbm,
             router.RsrqDb,
             router.SnrDb,
+            router.UploadBytesPerSecond,
+            router.DownloadBytesPerSecond,
             router.UnreadSmsCount);
     }
 

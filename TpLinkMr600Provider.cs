@@ -12,7 +12,8 @@ internal sealed class TpLinkMr600Provider :
     IRouterTelemetryProvider,
     IRouterCellLockProvider,
     IRouterMobileNetworkModeProvider,
-    IRouterSmsProvider
+    IRouterSmsProvider,
+    IRouterRebootProvider
 {
     private const string DefaultTokenId = "abcd";
     private const int InvalidCredentialsCode = 71233;
@@ -221,6 +222,15 @@ internal sealed class TpLinkMr600Provider :
         await SendActionsAsync(actions, cancellationToken);
     }
 
+    public async Task RebootRouterAsync(CancellationToken cancellationToken)
+    {
+        EnsureConnected();
+        await SendActionsAsync(
+            [new RouterAction(8, "/cgi/reboot", ZeroStack, ZeroStack, [])],
+            cancellationToken);
+        await DisposeClientAsync();
+    }
+
     public async Task<RouterMobileNetworkModeState> ReadMobileNetworkModeAsync(
         CancellationToken cancellationToken)
     {
@@ -409,6 +419,7 @@ internal sealed class TpLinkMr600Provider :
             "from",
             "receivedTime",
             cancellationToken));
+        await Task.Delay(150, cancellationToken);
         messages.AddRange(await ReadSmsFolderAsync(
             "LTE_SMS_SENDMSGBOX",
             "LTE_SMS_SENDMSGENTRY",
@@ -416,6 +427,7 @@ internal sealed class TpLinkMr600Provider :
             "to",
             "sendTime",
             cancellationToken));
+        await Task.Delay(150, cancellationToken);
         messages.AddRange(await ReadSmsFolderAsync(
             "LTE_SMS_DRAFTMSGBOX",
             "LTE_SMS_DRAFTMSGENTRY",
@@ -466,6 +478,8 @@ internal sealed class TpLinkMr600Provider :
         var messages = new List<RouterSmsMessage>(total);
         for (int page = 1; page <= pages && messages.Count < total; page++)
         {
+            if (page > 1)
+                await Task.Delay(75, cancellationToken);
             await SendActionsAsync(
                 [new RouterAction(
                     2,
@@ -1069,47 +1083,64 @@ internal sealed class TpLinkMr600Provider :
     {
         EnsureConnected();
         string plainText = BuildActionBody(actions);
-        EncryptedPayload encrypted = _crypto!.EncryptRequest(plainText);
-        string body = $"sign={encrypted.Signature}\r\ndata={encrypted.Data}\r\n";
-        using var request = new HttpRequestMessage(HttpMethod.Post, "cgi_gdpr?")
+        bool smsRequest = actions.Any(action =>
+            action.Oid.StartsWith("LTE_SMS_", StringComparison.Ordinal));
+        int attempts = smsRequest ? 4 : 2;
+        for (int attempt = 1; attempt <= attempts; attempt++)
         {
-            Content = new StringContent(body, Encoding.UTF8)
-        };
-        request.Content.Headers.ContentType = new MediaTypeHeaderValue("text/plain");
-        request.Headers.TryAddWithoutValidation("TokenID", _tokenId);
+            EncryptedPayload encrypted = _crypto!.EncryptRequest(plainText);
+            string body = $"sign={encrypted.Signature}\r\ndata={encrypted.Data}\r\n";
+            using var request = new HttpRequestMessage(HttpMethod.Post, "cgi_gdpr?")
+            {
+                Content = new StringContent(body, Encoding.UTF8)
+            };
+            request.Content.Headers.ContentType = new MediaTypeHeaderValue("text/plain");
+            request.Headers.TryAddWithoutValidation("TokenID", _tokenId);
 
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken);
-        timeout.CancelAfter(RequestTimeout);
-        using HttpResponseMessage response = await GetClient().SendAsync(
-            request, HttpCompletionOption.ResponseContentRead, timeout.Token);
-        string encryptedResponse = await response.Content.ReadAsStringAsync(timeout.Token);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(smsRequest ? TimeSpan.FromSeconds(25) : RequestTimeout);
+            try
+            {
+                using HttpResponseMessage response = await GetClient().SendAsync(
+                    request, HttpCompletionOption.ResponseContentRead, timeout.Token);
+                string encryptedResponse = await response.Content.ReadAsStringAsync(timeout.Token);
 
-        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-            throw new RouterAuthenticationException("The TP-Link session expired.");
-        if (!response.IsSuccessStatusCode)
-            throw new RouterConnectionException(
-                $"The router status request failed ({(int)response.StatusCode}).");
-        if (LooksLikeLoginPage(encryptedResponse))
-            throw new RouterAuthenticationException("The TP-Link session expired.");
+                if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                    throw new RouterAuthenticationException("The TP-Link session expired.");
+                bool transient = response.StatusCode is HttpStatusCode.InternalServerError or
+                    HttpStatusCode.ServiceUnavailable or HttpStatusCode.TooManyRequests;
+                if (!response.IsSuccessStatusCode)
+                {
+                    if (transient && attempt < attempts)
+                    {
+                        await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt * attempt), cancellationToken);
+                        continue;
+                    }
+                    throw new RouterConnectionException(
+                        $"The router request failed ({(int)response.StatusCode}) after {attempt} attempt(s).");
+                }
+                if (LooksLikeLoginPage(encryptedResponse))
+                    throw new RouterAuthenticationException("The TP-Link session expired.");
 
-        string plainResponse;
-        try
-        {
-            plainResponse = _crypto.DecryptResponse(encryptedResponse);
+                try
+                {
+                    return ParseCgiResponse(_crypto.DecryptResponse(encryptedResponse));
+                }
+                catch (FormatException)
+                {
+                    throw new RouterAuthenticationException("The TP-Link session response was not encrypted as expected.");
+                }
+                catch (CryptographicException)
+                {
+                    throw new RouterAuthenticationException("The TP-Link session could not be decrypted.");
+                }
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && attempt < attempts)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt * attempt), cancellationToken);
+            }
         }
-        catch (FormatException)
-        {
-            throw new RouterAuthenticationException(
-                "The TP-Link session response was not encrypted as expected.");
-        }
-        catch (CryptographicException)
-        {
-            throw new RouterAuthenticationException(
-                "The TP-Link session could not be decrypted.");
-        }
-
-        return ParseCgiResponse(plainResponse);
+        throw new RouterConnectionException("The router did not complete the request after multiple attempts.");
     }
 
     private static string BuildActionBody(IReadOnlyList<RouterAction> actions)
