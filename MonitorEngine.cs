@@ -1,5 +1,7 @@
 ﻿using System.Net.NetworkInformation;
 
+using System.Net.Sockets;
+
 namespace NetPulseMonitor;
 
 internal sealed class MonitorEngine : IDisposable
@@ -195,7 +197,11 @@ internal sealed class MonitorEngine : IDisposable
         if (latency.HasValue)
             RegisterSuccess(latency.Value);
         else
-            RegisterFailure(settings);
+        {
+            bool alternateInternetAvailable =
+                await HasAlternateInternetConnectivityAsync(token);
+            RegisterFailure(settings, alternateInternetAvailable);
+        }
 
         SampleRecorded?.Invoke(latency);
     }
@@ -239,31 +245,59 @@ internal sealed class MonitorEngine : IDisposable
         }
     }
 
-    private void RegisterFailure(AppSettings settings)
+    private void RegisterFailure(
+        AppSettings settings,
+        bool alternateInternetAvailable)
     {
         MonitorEvent? outageEvent = null;
+        MonitorEvent? recoveryEvent = null;
+        double? recoveryDuration = null;
 
         lock (_gate)
         {
             _failed++;
             _currentPing = null;
-            _consecutiveFailures++;
             AddRecent(null);
 
-            if (!_outageStartedAt.HasValue &&
-                _consecutiveFailures >= settings.FailuresForOutage)
+            // ICMP failure alone does not prove an Internet outage. A successful
+            // independent TCP probe means the sample is target packet loss while
+            // normal traffic (for example a download) remains online.
+            if (alternateInternetAvailable)
             {
-                _outageStartedAt = DateTime.Now.AddSeconds(
-                    -settings.PingIntervalSeconds * (settings.FailuresForOutage - 1));
-                _outages++;
-                _isOnline = false;
-
-                outageEvent = new MonitorEvent
+                _consecutiveFailures = 0;
+                _isOnline = true;
+                if (_outageStartedAt.HasValue)
                 {
-                    Timestamp = _outageStartedAt.Value,
-                    Kind = "OFFLINE",
-                    Message = "Connection outage detected"
-                };
+                    TimeSpan outage = DateTime.Now - _outageStartedAt.Value;
+                    _completedDowntime += outage;
+                    recoveryDuration = outage.TotalSeconds;
+                    _outageStartedAt = null;
+                    recoveryEvent = new MonitorEvent
+                    {
+                        Kind = "ONLINE",
+                        Message = "Internet connectivity confirmed; ping target did not answer"
+                    };
+                }
+            }
+            else
+            {
+                _consecutiveFailures++;
+
+                if (!_outageStartedAt.HasValue &&
+                    _consecutiveFailures >= settings.FailuresForOutage)
+                {
+                    _outageStartedAt = DateTime.Now.AddSeconds(
+                        -settings.PingIntervalSeconds * (settings.FailuresForOutage - 1));
+                    _outages++;
+                    _isOnline = false;
+
+                    outageEvent = new MonitorEvent
+                    {
+                        Timestamp = _outageStartedAt.Value,
+                        Kind = "OFFLINE",
+                        Message = "Connection outage confirmed by ping and independent TCP probes"
+                    };
+                }
             }
         }
 
@@ -271,6 +305,47 @@ internal sealed class MonitorEngine : IDisposable
         {
             _logger.LogEvent(outageEvent);
             EventOccurred?.Invoke(outageEvent);
+        }
+        if (recoveryEvent is not null)
+        {
+            _logger.LogEvent(recoveryEvent, recoveryDuration);
+            EventOccurred?.Invoke(recoveryEvent);
+        }
+    }
+
+    private static async Task<bool> HasAlternateInternetConnectivityAsync(
+        CancellationToken cancellationToken)
+    {
+        Task<bool>[] probes =
+        [
+            TryTcpConnectAsync("1.1.1.1", 443, cancellationToken),
+            TryTcpConnectAsync("8.8.8.8", 53, cancellationToken)
+        ];
+        bool[] results = await Task.WhenAll(probes);
+        return results.Any(result => result);
+    }
+
+    private static async Task<bool> TryTcpConnectAsync(
+        string host,
+        int port,
+        CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(2));
+        try
+        {
+            using var client = new TcpClient();
+            await client.ConnectAsync(host, port, timeout.Token);
+            return client.Connected;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (SocketException)
+        {
+            return false;
         }
     }
 

@@ -1161,7 +1161,7 @@ internal sealed class MainForm : Form
             BackColor = Color.White,
             Padding = new Padding(18, 12, 18, 12),
             Text = "Manual TP-Link LTE Cell Lock\r\nEnter a known primary-cell profile. " +
-                   "CID is optional; EARFCN and PCI are required. Saving adds the profile " +
+                   "CID, EARFCN and PCI are required. Saving adds the profile " +
                    "to LTE history without inventing measurements. Applying always asks " +
                    "for confirmation and keeps automatic rollback protection.",
             Font = new Font("Segoe UI", 10F),
@@ -1187,12 +1187,12 @@ internal sealed class MainForm : Form
         _manualBandsInput.CueText = "B3 or B3 + B20";
         _manualEarfcnInput.CueText = "Primary EARFCN";
         _manualPciInput.CueText = "0-512";
-        _manualCidInput.CueText = "Optional decimal or hex CID (e.g. ABCDE)";
+        _manualCidInput.CueText = "Required decimal or hex CID (e.g. ABCDE)";
         AddManualLockField(fields, 0, "Previously observed set", _observedCellLockInput);
         AddManualLockField(fields, 1, "LTE band profile", _manualBandsInput);
         AddManualLockField(fields, 2, "Primary EARFCN", _manualEarfcnInput);
         AddManualLockField(fields, 3, "PCI", _manualPciInput);
-        AddManualLockField(fields, 4, "CID (optional)", _manualCidInput);
+        AddManualLockField(fields, 4, "CID", _manualCidInput);
         _manualLockStatus.Dock = DockStyle.Fill;
         _manualLockStatus.TextAlign = ContentAlignment.MiddleLeft;
         _manualLockStatus.ForeColor = Color.DimGray;
@@ -2936,7 +2936,7 @@ internal sealed class MainForm : Form
             return;
         }
         bool internetIsOnline = _engine.GetSnapshot().IsOnline;
-        string cidText = cid is null ? "not used (optional)" : cid;
+        string cidText = cid!;
         string safetyText = internetIsOnline
             ? "NetPulse will validate connectivity and restore the previous settings if validation fails."
             : "Internet is already offline. If the router accepts this lock, NetPulse will keep it so you can use it to recover service. Use Restore automatic if needed.";
@@ -3004,8 +3004,14 @@ internal sealed class MainForm : Form
         }
         if (!LteRadioIdentifier.TryNormalizeCellId(cidInput, out cid))
         {
-            error = "CID is optional; use a decimal or hexadecimal value " +
+            error = "CID must be a decimal or hexadecimal value " +
                     "(for example ABCDE).";
+            target = null;
+            return false;
+        }
+        if (cid is null)
+        {
+            error = "CID is required so different serving cells are recorded separately.";
             target = null;
             return false;
         }
@@ -4108,7 +4114,7 @@ internal sealed class MainForm : Form
             $"Band: {selected.Band}{Environment.NewLine}" +
             $"EARFCN: {selected.Earfcn}{Environment.NewLine}" +
             $"PCI: {selected.Pci}{Environment.NewLine}" +
-            $"CID (optional): {selected.CellId ?? "not available"}";
+            $"CID: {selected.CellId ?? "not available — profile is not eligible"}";
         try
         {
             Clipboard.SetText(values);
@@ -4198,7 +4204,7 @@ internal sealed class MainForm : Form
         string lockDetails;
         if (target!.HasCellTarget)
         {
-            string cid = target.CellId is null ? "not used (optional)" : target.CellId;
+            string cid = target.CellId ?? "not available";
             lockDetails =
                 $"EARFCN: {target.Earfcn}\r\n" +
                 $"PCI: {target.Pci}\r\n" +

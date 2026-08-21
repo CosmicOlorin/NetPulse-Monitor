@@ -367,8 +367,12 @@ internal sealed class LteCellHistoryStore : IDisposable
             throw new ArgumentException("PCI must be a number from 0 to 512.", nameof(pci));
         if (!LteRadioIdentifier.TryNormalizeCellId(cellId, out string? normalizedCellId))
             throw new ArgumentException(
-                "CID is optional; use a decimal or hexadecimal value " +
+                "CID must be a decimal or hexadecimal value " +
                 "(for example ABCDE).",
+                nameof(cellId));
+        if (normalizedCellId is null)
+            throw new ArgumentException(
+                "CID is required so measurements from different serving cells are never combined.",
                 nameof(cellId));
 
         var identity = new CellIdentity(
@@ -407,7 +411,8 @@ internal sealed class LteCellHistoryStore : IDisposable
             !TryNormalizeOptionalPci(pci, out string normalizedPci) ||
             !LteRadioIdentifier.TryNormalizeCellId(
                 cellId,
-                out string? normalizedCellId))
+                out string? normalizedCellId) ||
+            normalizedCellId is null)
             return false;
 
         var identity = new CellIdentity(
@@ -631,23 +636,7 @@ internal sealed class LteCellHistoryStore : IDisposable
                 Equal(item.Pci, identity.Pci))
             .ToArray();
 
-        if (identity.CellId is not null)
-        {
-            LteCellHistoryRecord? unspecified = sameRadio
-                .SingleOrDefault(item => string.IsNullOrWhiteSpace(item.CellId));
-            if (unspecified is not null && sameRadio.Length == 1)
-            {
-                string oldKey = unspecified.Key;
-                unspecified.CellId = identity.CellId;
-                unspecified.Key = exactKey;
-                if (string.Equals(_activeKey, oldKey, StringComparison.Ordinal))
-                    _activeKey = exactKey;
-                if (string.Equals(_lastKnownKey, oldKey, StringComparison.Ordinal))
-                    _lastKnownKey = exactKey;
-                return unspecified;
-            }
-        }
-        else
+        if (identity.CellId is null)
         {
             LteCellHistoryRecord? active = sameRadio.FirstOrDefault(item =>
                 string.Equals(item.Key, _activeKey, StringComparison.Ordinal));
@@ -761,7 +750,8 @@ internal sealed class LteCellHistoryStore : IDisposable
             }
         }
 
-        if (earfcn is null || !IsEarfcnValidForPrimaryBand(primaryBand, earfcn))
+        if (earfcn is null || cellId is null ||
+            !IsEarfcnValidForPrimaryBand(primaryBand, earfcn))
         {
             identity = null;
             return false;
@@ -885,7 +875,8 @@ internal sealed class LteCellHistoryStore : IDisposable
             {
                 Period = periodId
             };
-        bool eligible = record.ConnectedSeconds >= MinimumObservationSeconds &&
+        bool eligible = record.CellId is not null &&
+                        record.ConnectedSeconds >= MinimumObservationSeconds &&
                         record.SpeedTests >= MinimumSpeedTests &&
                         record.DownloadSamples > 0;
 
@@ -1173,7 +1164,8 @@ internal sealed class LteCellHistoryStore : IDisposable
         }
 
         MergeExactDuplicates(document.Records);
-        MergeIncompleteDuplicates(document.Records);
+        // Never attach incomplete historical evidence to a known CID. The same
+        // band/EARFCN/PCI can be served by different cells with different results.
         foreach (LteCellHistoryRecord record in document.Records)
             record.Key = CreateRecordKey(record);
     }
@@ -1342,13 +1334,15 @@ internal sealed class LteCellHistoryStore : IDisposable
 
     private static bool IsLockReadyIdentity(CellIdentity identity) =>
         IsEarfcnValidForPrimaryBand(identity.PrimaryBand, identity.Earfcn) &&
-        IsValidPci(identity.Pci);
+        IsValidPci(identity.Pci) &&
+        identity.CellId is not null;
 
     private static bool IsLockReadyRecord(LteCellHistoryRecord record) =>
         IsEarfcnValidForPrimaryBand(
             NormalizePrimaryBand(record.PrimaryBand, record.Band),
             record.Earfcn) &&
-        IsValidPci(record.Pci);
+        IsValidPci(record.Pci) &&
+        record.CellId is not null;
 
     private static int IdentityCompleteness(LteCellHistoryRecord record) =>
         (record.Earfcn == "-" ? 0 : 1) +
