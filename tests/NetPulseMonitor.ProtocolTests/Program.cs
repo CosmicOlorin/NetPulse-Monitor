@@ -843,29 +843,24 @@ static void TestCellHistoryRanking()
             Telemetry(secondStart.AddSeconds(600), "B3", "1300", "321", "222"),
             Speed(50, 10));
 
-        DateTime thirdStart = secondStart.AddSeconds(700);
-        RecordCell(history, thirdStart, "B7", "2850", "42", "-", 600);
-        history.RecordSpeedTest(
-            Telemetry(thirdStart.AddSeconds(600), "B7", "2850", "42", "-"),
-            Speed(100, 5));
-
         IReadOnlyList<LteCellRecommendation> ranked = history.GetRecommendations();
-        Require(ranked.Count == 3, "All observed LTE cells should be retained.");
-        Require(ranked[0].Band == "B7",
-            "The 50/40/10 score should prefer the balanced zero-disconnection profile.");
-        Require(ranked[1].Band == "B1",
-            "The fastest profile should rank second after its measured drop-rate penalty.");
-        Require(ranked[2].Band == "B3",
-            "The slowest eligible profile should rank last in this measured set.");
-        Require(ranked.Single(item => item.Band == "B7").CellId is null,
-            "CID should remain optional when the router does not report it.");
+        Require(ranked.Count == 2, "Every retained LTE profile must have a CID.");
+        Require(ranked.All(item => item.CellId is not null),
+            "CID-less telemetry must not enter measured LTE history.");
         Require(history.GetActiveProfileKey() == ranked.Single(item =>
-                item.Band == "B7").Key,
+                item.Band == "B3").Key,
             "The history store should expose the currently used profile for highlighting.");
         IReadOnlyList<LteCellRecommendation> observedLocks =
             history.GetObservedLockProfiles();
-        Require(observedLocks.Count == 3 && observedLocks[0].Band == "B7",
+        Require(observedLocks.Count == 2 && observedLocks[0].Band == "B3",
             "Cell Lock choices should show stable observed sets with the active set first.");
+
+        DateTime thirdStart = secondStart.AddSeconds(700);
+        RecordCell(history, thirdStart, "B3", "1300", "321", "AAA01", 10);
+        RecordCell(history, thirdStart.AddSeconds(20), "B3", "1300", "321", "BBB02", 10);
+        Require(history.GetRecommendations().Count(item =>
+                    item.Band == "B3" && item.Earfcn == "1300" && item.Pci == "321") == 3,
+            "Identical bands/EARFCN/PCI with different CIDs must remain separate profiles.");
 
         string shortHistoryPath = Path.Combine(testFolder, "short-history.json");
         using (var shortHistory = new LteCellHistoryStore(shortHistoryPath))
@@ -901,19 +896,12 @@ static void TestCellHistoryRanking()
                     candidates.GetRecommendations().Count == 0,
                 "Individual LTE History deletion should remove only the selected profile.");
 
-            Require(candidates.AddDiscoveryCandidate(
+            Require(!candidates.AddDiscoveryCandidate(
                     "B8",
                     "3501",
                     "-",
                     "-"),
-                "A band and EARFCN discovered without PCI/CID should still be added to LTE History.");
-            LteCellRecommendation bandOnlyCandidate =
-                candidates.GetRecommendations().Single();
-            Require(bandOnlyCandidate.DiscoveryCandidate &&
-                    bandOnlyCandidate.Band == "B8" &&
-                    bandOnlyCandidate.Earfcn == "3501" &&
-                    bandOnlyCandidate.Pci == "-",
-                "Band-only discovery candidates must retain their real EARFCN without inventing PCI/CID.");
+                "Discovery candidates without CID must not enter LTE History.");
         }
 
         string discoveryCsv = Path.Combine(testFolder, "band-cell-discovery.csv");
@@ -927,12 +915,9 @@ static void TestCellHistoryRanking()
             "imported-discovery-candidates.json");
         using (var imported = new LteCellHistoryStore(importedHistoryPath))
         {
-            Require(imported.ImportDiscoveryCandidates(discoveryCsv) == 1,
-                "Only real serving observations should be recovered from the discovery CSV.");
-            LteCellRecommendation recovered = imported.GetRecommendations().Single();
-            Require(recovered.Band == "B8" && recovered.Earfcn == "3501" &&
-                    recovered.Pci == "-" && recovered.DiscoveryCandidate,
-                "A previous band-only discovery result must be restored to LTE History.");
+            Require(imported.ImportDiscoveryCandidates(discoveryCsv) == 0 &&
+                    imported.GetRecommendations().Count == 0,
+                "Discovery CSV rows without CID must remain excluded from LTE History.");
         }
 
         string bandOnlyHistoryPath = Path.Combine(testFolder, "band-only-history.json");
@@ -957,9 +942,8 @@ static void TestCellHistoryRanking()
                 Speed(120, 20));
             IReadOnlyList<LteCellRecommendation> bandOnly =
                 bandOnlyHistory.GetRecommendations();
-            Require(bandOnly.Count == 1 && bandOnly[0].Pci == "-" &&
-                    bandOnly[0].IsEligible,
-                "Live EARFCN history should remain useful when firmware hides PCI.");
+            Require(bandOnly.Count == 0,
+                "Telemetry without CID must not create an ambiguous LTE profile.");
         }
 
         string pcellHistoryPath = Path.Combine(testFolder, "pcell-history.json");
@@ -983,10 +967,9 @@ static void TestCellHistoryRanking()
                     samePrimary.CellId == "777",
                 "EARFCN/PCI/CID should carry only from the immediately previous " +
                 "state when the PCell remains unchanged.");
-            LteCellRecommendation changedPrimary = pcellRows.Single(item =>
-                item.Band == "B28 + B3" && item.Earfcn == "9500");
-            Require(changedPrimary.Pci == "-" && changedPrimary.CellId is null,
-                "A changed PCell must not inherit identifiers from the previous primary cell.");
+            Require(!pcellRows.Any(item =>
+                    item.Band == "B28 + B3" && item.Earfcn == "9500"),
+                "A changed PCell without CID must not enter LTE History.");
             Require(!pcellRows.Any(item => item.PrimaryBand == "B3" && item.Earfcn == "6400"),
                 "An EARFCN outside the serving PCell band must never enter history.");
         }
@@ -998,9 +981,8 @@ static void TestCellHistoryRanking()
         {
             startupAggregation.RecordTelemetry(
                 Telemetry(started, "B1 + B3", "500", "-", "-"));
-            Require(startupAggregation.GetRecommendations().Single().Pci == "-",
-                "An incomplete aggregated state at startup may be recorded as " +
-                "band-only evidence but must not guess an identity.");
+            Require(startupAggregation.GetRecommendations().Count == 0,
+                "An incomplete aggregated state at startup must wait for a real CID.");
             startupAggregation.RecordTelemetry(
                 Telemetry(started.AddSeconds(1), "B1", "500", "77", "ABC01"));
             startupAggregation.RecordTelemetry(
@@ -1013,8 +995,7 @@ static void TestCellHistoryRanking()
                 "preceding live PCell state.");
             Require(startupAggregation.GetRecommendations()
                     .Count(item => item.Band == "B1 + B3") == 1,
-                "Completing an initially band-only profile must upgrade the same row, " +
-                "not create a duplicate.");
+                "The completed CID-qualified aggregate must create exactly one row.");
         }
 
         string restartAggregationPath = Path.Combine(
@@ -1114,13 +1095,14 @@ static void TestCellHistoryRanking()
                 "A stale lock-target EARFCN must be repaired from the valid PCell " +
                 "channel and duplicate evidence must be merged.");
             LteCellRecommendation repairedAggregation = rows.Single(item =>
-                item.Band == "B3 + B28");
+                item.Band == "B3 + B28" && item.CellId == "BBB");
             Require(repairedAggregation.Earfcn == "1700" &&
                     repairedAggregation.Pci == "42" &&
                     repairedAggregation.CellId == "BBB" &&
-                    Math.Abs(repairedAggregation.ConnectedTime.TotalSeconds - 150) < 0.1,
-                "Incomplete and complete rows for the same ordered aggregation " +
-                "profile must become one history row.");
+                    Math.Abs(repairedAggregation.ConnectedTime.TotalSeconds - 90) < 0.1,
+                "CID-qualified evidence must remain separate from an ambiguous legacy row.");
+            Require(rows.Any(item => item.Band == "B3 + B28" && item.CellId is null),
+                "Ambiguous legacy evidence must not be assigned to a known CID.");
             Require(rows.Any(item => item.Band == "B1" && item.Earfcn == "500"),
                 "EARFCN 500 is valid for LTE Band 1 and must not be discarded.");
         }
