@@ -299,6 +299,7 @@ public partial class MainPage : ContentPage
         if (_client is null) return;
         int[] bands = (BandsEntry.Text ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(value => int.TryParse(value.TrimStart('B', 'b'), out int band) ? band : 0).Where(value => value > 0).ToArray();
         if (bands.Length == 0) { LteStatusLabel.Text = "Enter at least one LTE band."; return; }
+        if (string.IsNullOrWhiteSpace(LockCidEntry.Text)) { LteStatusLabel.Text = "CID is required so different serving cells remain separate."; return; }
         if (!await DisplayAlert("Apply LTE lock", "The router connection may briefly disconnect. Apply this band/cell lock?", "Apply", "Cancel")) return;
         try { LteStatusLabel.Text = "Applying…"; await _client.ApplyLteLockAsync(bands, LockEarfcnEntry.Text ?? "", LockPciEntry.Text ?? "", LockCidEntry.Text); LteStatusLabel.Text = "Lock applied."; }
         catch (Exception ex) { LteStatusLabel.Text = FriendlyError(ex); }

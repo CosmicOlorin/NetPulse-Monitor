@@ -60,7 +60,7 @@
           <CollectionView x:Name="LteList" SelectionMode="Single" SelectionChanged="OnLteSelected" HeightRequest="260"><CollectionView.ItemTemplate><DataTemplate><Border BackgroundColor="#1B2530" Stroke="#354454" Padding="10" Margin="0,3"><Grid ColumnDefinitions="Auto,*" ColumnSpacing="14"><Label Text="{Binding Band}" FontAttributes="Bold" TextColor="#F3F7FA"/><Label Grid.Column="1" Text="{Binding IdentitySummary}" HorizontalTextAlignment="End" LineBreakMode="TailTruncation" TextColor="#B9C8D4"/></Grid></Border></DataTemplate></CollectionView.ItemTemplate></CollectionView>
           <Entry x:Name="BandsEntry" Placeholder="Bands, e.g. 3,20" BackgroundColor="#10171E" TextColor="#F3F7FA"/>
           <Grid ColumnDefinitions="*,*" ColumnSpacing="8"><Entry x:Name="LockEarfcnEntry" Placeholder="EARFCN" BackgroundColor="#10171E" TextColor="#F3F7FA"/><Entry Grid.Column="1" x:Name="LockPciEntry" Placeholder="PCI" BackgroundColor="#10171E" TextColor="#F3F7FA"/></Grid>
-          <Entry x:Name="LockCidEntry" Placeholder="CID (optional, decimal or hex)" BackgroundColor="#10171E" TextColor="#F3F7FA"/>
+          <Entry x:Name="LockCidEntry" Placeholder="CID (required, decimal or hex)" BackgroundColor="#10171E" TextColor="#F3F7FA"/>
           <Grid ColumnDefinitions="*,*" ColumnSpacing="8"><Button Text="Apply lock" Clicked="OnApplyLockClicked" BackgroundColor="#A36A00" TextColor="White"/><Button Grid.Column="1" Text="Restore automatic" Clicked="OnRestoreAutomaticClicked" BackgroundColor="#16875D" TextColor="White"/></Grid>
           <Button Text="Restart router" Clicked="OnRestartRouterClicked" BackgroundColor="#8A3030" TextColor="White"/>
           <Label x:Name="LteStatusLabel" TextColor="#FFB86C"/>
