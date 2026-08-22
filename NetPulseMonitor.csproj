@@ -7,13 +7,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>NetPulseMonitor</RootNamespace>
-    <AssemblyName>NetPulseMonitor</AssemblyName>
+    <AssemblyName>NetPulse Monitor</AssemblyName>
     <AssemblyTitle>NetPulse Monitor</AssemblyTitle>
     <Product>NetPulse Monitor</Product>
     <Company>CosmicOlorin</Company>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\NetPulse.ico</ApplicationIcon>
-    <Version>1.0.14</Version>
+    <Version>1.0.15</Version>
     <Authors>CosmicOlorin</Authors>
     <Copyright>Copyright © 2026 CosmicOlorin. All rights reserved.</Copyright>
     <Description>Windows Internet, LTE router, outage, SMS, and speed monitor.</Description>

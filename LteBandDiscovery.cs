@@ -135,14 +135,18 @@ internal static class LteBandDiscovery
     public static bool TryReadServingCell(
         int requestedBand,
         RouterTelemetry telemetry,
-        out LteBandCellObservation? observation)
+        out LteBandCellObservation? observation,
+        bool requireSingleBand = true)
     {
         observation = null;
         if (!telemetry.IsConnected)
             return false;
 
         int[] activeBands = ExtractBands(telemetry.Band).ToArray();
-        if (activeBands.Length != 1 || activeBands[0] != requestedBand)
+        if (activeBands.Length == 0 ||
+            (requireSingleBand
+                ? activeBands.Length != 1 || activeBands[0] != requestedBand
+                : !activeBands.Contains(requestedBand)))
             return false;
 
         string servingProfile = NormalizeBandProfile(telemetry.Band, requestedBand);

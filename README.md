@@ -8,7 +8,7 @@ diagnostics and ISP-ready evidence.**
 · [Security policy](.github/SECURITY.md)
 · [Privacy notice](PRIVACY.md)
 
-NetPulse Monitor 1.0.8 is a native .NET 8 WinForms application for continuous
+NetPulse Monitor 1.0.15 is a native .NET 8 WinForms application for continuous
 Windows connection monitoring. It runs as a graphical Windows application and
 does not open a console window during normal use.
 
@@ -24,10 +24,9 @@ considerable time.
 
 The standard router interface is useful for configuration, but it primarily
 presents a current snapshot. It does not build a long-term, time-aware record of
-which primary cell and band combinations are most reliable, and its automatic
-selection is not based on the user's measured disconnects and throughput history.
-NetPulse turns those observations into local evidence weighted as 50% download,
-40% confirmed disconnections and 10% upload. The goal is to give the user an
+which primary cell and band combinations have the best measured radio quality.
+NetPulse scores complete profiles as 50% SINR, 35% RSRQ and 15% RSRP. The goal
+is to give the user an
 understandable record, safer manual control and guarded automation while keeping
 every router change explicit and recoverable.
 
@@ -48,13 +47,13 @@ endorsed by or supported by TP-Link or any mobile/internet provider.
 - LTE signal, RSRP, RSRQ, SNR, PCell/SCell bands, primary EARFCN, SIM, usage and rates
 - PCI/CID display and cell-specific locking when the router firmware exposes them
 - Local LTE cell history with connection time, confirmed disconnects and speed tests
-- Ranked cell + band suggestions: 50% download, 40% disconnections and 10% upload
+- Ranked cell + band suggestions: 50% SINR, 35% RSRQ and 15% RSRP
 - Time-of-day learning with average ping and an explained cell-load estimate
 - Manual profile entry, Cell Lock and opt-in guarded automatic locking with rollback
 - Controlled multi-profile Cell Experiment mode that restores the original router state
 - Cancelable Band & Cell Discovery mode with a verified per-model band plan,
   serving-cell capture and exact router-state restoration
-- Time-period-grouped LTE history with sortable columns and preserved PCell identity
+- Ungrouped LTE history with sortable columns and preserved PCell identity
 - Searchable SMS conversation and timeline views combining Inbox, Sent and Drafts
 - Country-aware phone matching joins national, `+` and `00` number formats
 - Stable SMS refresh, one alert per unread message, verified read/unread state, deletion and sending
@@ -72,9 +71,16 @@ endorsed by or supported by TP-Link or any mobile/internet provider.
 - Full technical ISP evidence ZIP with IP, antenna, outage, telemetry and LTE-history details
 - LTE Simple, LTE Advanced, DSL/Fiber and ISP-troubleshooting dashboard layouts
 - System/Light/Dark themes, system tray, optional Windows startup and editable settings
-- Manual or daily update checks with no automatic download
+- Manual or daily update checks with in-app download, verification and restart
+- Stable `NetPulse Monitor.exe` path and Windows identity across updates, preserving shortcuts, pins and startup configuration
+- Live TP-Link connected-device list in the Windows app and Android Companion (device name, IP, MAC and connection type when reported by firmware)
 - Reproducible SHA-256 release packaging
 - An embedded application and tray icon
+
+Build tooling that is not supplied by Windows or Android is acquired by the
+versioned GitHub workflow. Temporary SDK archives used during development are
+tracked and removed after release verification; application settings, logs,
+contacts, SMS state and LTE history are never included in that cleanup.
 
 Application settings are stored in `%LOCALAPPDATA%\NetPulseMonitor`. The router
 password is not stored in that JSON file; when remembering is enabled it is kept
@@ -96,7 +102,7 @@ cells selected by the router; it cannot reveal a private neighbor-cell list that
 the router API does not provide. Intentional scan changes are excluded from LTE
 recommendation evidence and do not trigger speed tests. Results are appended to
 `band-cell-discovery.csv` with full identifiers. Every result with a verified
-EARFCN and PCI is also inserted into the normal LTE History grid as an unranked,
+EARFCN, PCI and CID is also inserted into the normal LTE History grid as an unranked,
 lock-ready candidate. Previously stored exact profiles from earlier releases
 are restored to the same candidate flow; no synthetic measurements are added.
 
@@ -173,29 +179,26 @@ The validated MR600 firmware permits only one management login. NetPulse owns th
 telemetry is running. Close NetPulse before using the router webpage; normal app
 shutdown logs its router session out.
 
-The **LTE history** tab groups observations by local-time period: Night, Morning,
-Afternoon and Evening. Band combinations remain separate rows inside each period;
-PCI and CID are added when the router supplies them. Column headers sort the rows
-inside each period. A recommendation needs at least ten connected minutes and one
-speed test. Eligible profiles receive a normalized score made from 50% download,
-40% confirmed disconnections per connected hour and 10% upload. Provisional rows
-remain visible while evidence is collected. Each period is blended gradually with
-  all-time data, so sparse data does not cause abrupt decisions. The grid shows
+The **LTE history** tab shows one row for each distinct ordered band set and exact
+PCell CID/EARFCN/PCI identity. Time-of-day evidence is selected internally using
+the connection location's official time zone and is not repeated as a redundant
+Period column. A recommendation needs at least ten connected minutes plus complete
+SINR, RSRQ and RSRP evidence. Eligible profiles receive a normalized radio score:
+50% SINR, 35% RSRQ and 15% RSRP. Provisional rows remain visible while evidence is
+collected. Current-period evidence is blended gradually with all-time data, so
+sparse data does not cause abrupt decisions. The grid shows
   the successful-ping average collected on each profile and a cell-load estimate
   derived from period download versus that profile's observed best. The load
   value is explicitly an estimate, not a carrier-reported tower metric; neither
   display value adds a hidden ranking bonus.
 
 Connections remain recorded internally but do not appear in LTE History until
-they reach five connected minutes in that time period. Automatic refreshes keep
+they reach five connected minutes with a complete CID identity. Automatic refreshes keep
 the currently visible row and scroll position instead of returning the grid to
-the top. The current time-of-day group is always first, and the profile being
-used by the router is highlighted in green.
+the top. The profile being used by the router is highlighted in green.
 
-Download and upload are scored relative to the fastest eligible profile in the
-same period. The reliability component is `100 / (1 + drops per hour)`, so zero
-drops receives 100 points while repeated drops are penalized progressively rather
-than acting as an absolute veto.
+Download, upload, ping, load estimates and confirmed disconnects remain visible
+diagnostic evidence but do not add a hidden bonus or penalty to the RF score.
 
 NetPulse queues a fresh 20 MB download / 5 MB upload measurement after a
 confirmed outage recovers and after a stable LTE band, cell or public-IP change.
@@ -270,7 +273,7 @@ Create the single-file, self-contained Windows x64 release:
 Or double-click `BUILD-RELEASE.bat`. The executable is written to:
 
 ```text
-artifacts\publish\win-x64\NetPulseMonitor.exe
+artifacts\publish\win-x64\NetPulse Monitor.exe
 ```
 
 The builder also creates `artifacts\packages\NetPulse-Monitor-win-x64.zip` and

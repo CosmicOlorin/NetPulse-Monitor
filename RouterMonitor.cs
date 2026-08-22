@@ -166,6 +166,12 @@ internal sealed class RouterMonitor : IDisposable
             provider => provider.ReadSmsTimelineAsync(cancellationToken),
             cancellationToken);
 
+    public Task<IReadOnlyList<RouterConnectedDevice>> ReadConnectedDevicesAsync(
+        CancellationToken cancellationToken = default) =>
+        WithConnectedDevicesProviderAsync(
+            provider => provider.ReadConnectedDevicesAsync(cancellationToken),
+            cancellationToken);
+
     public async Task SetSmsUnreadAsync(
         string stack,
         string index,
@@ -484,6 +490,26 @@ internal sealed class RouterMonitor : IDisposable
             return await ExecuteWithReconnectUnsafeAsync(
                 provider => provider as IRouterSmsProvider,
                 "This router provider does not support SMS.",
+                operation,
+                cancellationToken);
+        }
+        finally
+        {
+            _providerGate.Release();
+        }
+    }
+
+    private async Task<T> WithConnectedDevicesProviderAsync<T>(
+        Func<IRouterConnectedDevicesProvider, Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        await _providerGate.WaitAsync(cancellationToken);
+        try
+        {
+            return await ExecuteWithReconnectUnsafeAsync(
+                provider => provider as IRouterConnectedDevicesProvider,
+                "This router firmware does not expose its connected-device list.",
                 operation,
                 cancellationToken);
         }

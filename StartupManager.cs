@@ -10,7 +10,7 @@ internal static class StartupManager
 
     public static void SetEnabled(bool enabled)
     {
-        using RegistryKey? key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
+        using RegistryKey? key = Registry.CurrentUser.CreateSubKey(RunKey, writable: true);
         if (key is null)
             return;
 

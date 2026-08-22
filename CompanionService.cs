@@ -208,8 +208,8 @@ internal sealed class CompanionService : IAsyncDisposable
                     sha256 = Convert.ToHexString(await SHA256.HashDataAsync(source, cancellationToken));
                 string info = JsonSerializer.Serialize(new
                 {
-                    displayVersion = "1.0.12",
-                    versionCode = 6,
+                    displayVersion = "1.0.15",
+                    versionCode = 9,
                     size = apk.Length,
                     sha256,
                     downloadPath = "/download/android"
@@ -230,6 +230,7 @@ internal sealed class CompanionService : IAsyncDisposable
                     "/v1/snapshot" when method == "GET" => _snapshotFactory(),
                     "/v1/sms" when method == "GET" => await ReadSmsAsync(cancellationToken),
                     "/v1/contacts" when method == "GET" => _contactsFactory(),
+                    "/v1/devices" when method == "GET" => await ReadConnectedDevicesAsync(cancellationToken),
                     "/v1/sms/unread" when method == "POST" => await SetSmsUnreadAsync(body, cancellationToken),
                     "/v1/sms/delete" when method == "POST" => await DeleteSmsAsync(body, cancellationToken),
                     "/v1/sms/send" when method == "POST" => await SendSmsAsync(body, cancellationToken),
@@ -277,6 +278,16 @@ internal sealed class CompanionService : IAsyncDisposable
             message.TimeText, message.Timestamp, Folder = message.Folder.ToString(), message.IsUnread, message.Identity
         }).ToArray();
 
+    private async Task<object> ReadConnectedDevicesAsync(CancellationToken token) =>
+        (await RequireRouter().ReadConnectedDevicesAsync(token)).Select(device => new
+        {
+            device.Name,
+            device.IpAddress,
+            device.MacAddress,
+            device.ConnectionType,
+            device.IsActive
+        }).ToArray();
+
     private async Task<object> SetSmsUnreadAsync(string body, CancellationToken token)
     {
         CompanionSmsAction action = JsonSerializer.Deserialize<CompanionSmsAction>(body) ?? throw new InvalidDataException("Invalid SMS action.");
@@ -303,8 +314,9 @@ internal sealed class CompanionService : IAsyncDisposable
     private async Task<object> ApplyLockAsync(string body, CancellationToken token)
     {
         CompanionLockRequest request = JsonSerializer.Deserialize<CompanionLockRequest>(body) ?? throw new InvalidDataException("Invalid LTE lock request.");
-        if (request.Bands.Length == 0 || request.Bands.Any(band => band is < 1 or > 261)) throw new InvalidDataException("At least one valid LTE band is required.");
-        var target = new RouterCellLockTarget { Bands = request.Bands.Distinct().ToArray(), Earfcn = request.Earfcn.Trim(), Pci = request.Pci.Trim(), CellId = request.CellId?.Trim() };
+        int[] bands = request.Bands.Distinct().ToArray();
+        if (bands.Length != 1 || bands[0] is < 1 or > 261) throw new InvalidDataException("Exactly one valid PCell band is required; the router selects SCells automatically.");
+        var target = new RouterCellLockTarget { Bands = bands, Earfcn = request.Earfcn.Trim(), Pci = request.Pci.Trim(), CellId = request.CellId?.Trim() };
         await SerializedAsync(() => RequireRouter().ApplyCellAndBandLockAsync(target, token), token);
         return new { ok = true };
     }
@@ -398,7 +410,13 @@ internal sealed class CompanionService : IAsyncDisposable
         byte[] header = Encoding.ASCII.GetBytes(
             $"HTTP/1.1 200 OK\r\nContent-Type: application/vnd.android.package-archive\r\nContent-Disposition: attachment; filename=\"NetPulse-Monitor-Companion-Android.apk\"\r\nContent-Length: {file.Length}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n");
         await stream.WriteAsync(header, token);
-        await using FileStream source = File.OpenRead(path);
+        await using var source = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read | FileShare.Delete,
+            64 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
         await source.CopyToAsync(stream, 64 * 1024, token);
     }
 

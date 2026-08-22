@@ -26,6 +26,7 @@ internal sealed class MainForm : Form
     private readonly DataGridView _eventsGrid = new();
     private readonly DataGridView _cellHistoryGrid = new FlickerFreeDataGridView();
     private readonly DataGridView _smsGrid = new();
+    private readonly DataGridView _connectedDevicesGrid = new();
     private readonly List<MonitorEvent> _eventHistory = [];
     private readonly ConnectionTimelineTracker _connectionTimeline = new();
     private readonly ThemedTabControl _tabs = new();
@@ -108,6 +109,8 @@ internal sealed class MainForm : Form
     private readonly Button _experimentButton = new();
     private readonly Label _experimentStatus = new();
     private readonly Button _bandDiscoveryButton = new();
+    private readonly ProgressBar _bandDiscoveryProgress = new();
+    private readonly List<Control> _lteProfileMutationControls = [];
     private readonly ToolTip _buttonTips = new()
     {
         InitialDelay = 350,
@@ -119,6 +122,7 @@ internal sealed class MainForm : Form
     private readonly ComboBox _eventFilterInput = new();
     private readonly TextBox _eventSearchInput = new();
     private readonly Label _troubleshootingSummary = new();
+    private readonly Label _connectedDevicesStatus = new();
 
     private readonly Label _gatewayValue = new();
     private readonly Label _gatewayPingValue = new();
@@ -133,6 +137,7 @@ internal sealed class MainForm : Form
     private CancellationTokenSource? _bandDiscoveryCancellation;
     private Task? _bandDiscoveryTask;
     private bool _speedBusy;
+    private bool _speedTestManual;
     private bool _allowExit;
     private DateTime _nextAutomaticSpeedTest;
     private bool _trayHintShown;
@@ -151,7 +156,7 @@ internal sealed class MainForm : Form
     private DiagnosticResult? _lastDiagnosticResult;
     private SpeedTestResult? _lastSpeedResult;
     private LteCellRecommendation? _smartCandidate;
-    private string _availableUpdateUrl = "";
+    private UpdateCheckResult? _availableUpdate;
     private readonly UnreadSmsAlertTracker _unreadSmsAlerts = new(
         Path.Combine(AppSettings.SettingsFolder, "sms-notification-hashes.txt"));
     private readonly Queue<string> _smsNotificationQueue = new();
@@ -165,8 +170,10 @@ internal sealed class MainForm : Form
     private string _observedCellLockFingerprint = "\0";
     private bool _refreshingObservedCellLockProfiles;
     private bool _mobileNetworkModeBusy;
+    private bool _connectedDevicesBusy;
+    private DateTime _nextConnectedDevicesRefreshUtc = DateTime.MinValue;
     private RouterMobileNetworkModeState? _mobileNetworkModeState;
-    private readonly HashSet<int> _collapsedTimePeriodGroups = [];
+    private RouterCellLockTarget? _displayedCellLockTarget;
     private IReadOnlyList<RouterSmsMessage> _smsMessages = [];
 
     public MainForm()
@@ -211,6 +218,9 @@ internal sealed class MainForm : Form
             HandleUnreadSmsCount(router.UnreadSmsCount);
             if (_tabs.SelectedTab?.Text == "LTE history")
                 RefreshCellHistory();
+            if (_tabs.SelectedTab?.Text == "Devices" &&
+                DateTime.UtcNow >= _nextConnectedDevicesRefreshUtc)
+                _ = RefreshConnectedDevicesAsync(showErrors: false);
             CheckAutomaticSpeedTest();
             CheckPublicIpChange();
             CheckAutomaticCellLock();
@@ -383,6 +393,7 @@ internal sealed class MainForm : Form
         _tabs.Padding = new Point(16, 7);
         _tabs.TabPages.Add(BuildDashboardTab());
         _tabs.TabPages.Add(BuildConnectionDetailsTab());
+        _tabs.TabPages.Add(BuildConnectedDevicesTab());
         _tabs.TabPages.Add(BuildLteHistoryTab());
         _tabs.TabPages.Add(BuildManualCellLockTab());
         _tabs.TabPages.Add(BuildSmsTab());
@@ -393,6 +404,8 @@ internal sealed class MainForm : Form
         {
             if (_tabs.SelectedTab?.Text == "SMS")
                 await RefreshSmsTimelineAsync(showErrors: false);
+            else if (_tabs.SelectedTab?.Text == "Devices")
+                await RefreshConnectedDevicesAsync(showErrors: true);
             else if (_tabs.SelectedTab?.Text == "LTE history")
                 RefreshCellHistory(force: true);
             else if (_tabs.SelectedTab?.Text == "Cell Lock")
@@ -674,12 +687,9 @@ internal sealed class MainForm : Form
         _updateButton.Height = 30;
         _updateButton.Click += async (_, _) =>
         {
-            if (_availableUpdateUrl.Length > 0)
+            if (_availableUpdate is not null)
             {
-                Process.Start(new ProcessStartInfo(_availableUpdateUrl)
-                {
-                    UseShellExecute = true
-                });
+                await InstallAvailableUpdateAsync(_availableUpdate);
                 return;
             }
             await CheckForUpdatesAsync(interactive: true);
@@ -918,7 +928,7 @@ internal sealed class MainForm : Form
         };
         var heading = new Label
         {
-            Text = "Time-aware cell and band recommendation",
+            Text = "LTE cell and band recommendation",
             Dock = DockStyle.Top,
             Height = 28,
             Font = new Font("Segoe UI", 11F, FontStyle.Bold)
@@ -944,11 +954,11 @@ internal sealed class MainForm : Form
         _cellHistoryGrid.BackgroundColor = Color.White;
         _cellHistoryGrid.BorderStyle = BorderStyle.Fixed3D;
         AddCellHistoryColumn("Rank", "Rank", 6);
-        AddCellHistoryColumn("Period", "Period", 12);
         AddCellHistoryColumn("Band", "Band", 8);
         AddCellHistoryColumn("Earfcn", "EARFCN", 9);
         AddCellHistoryColumn("Pci", "PCI", 7);
         AddCellHistoryColumn("Cid", "CID", 11);
+        AddCellHistoryColumn("Score", "RF score", 8);
         AddCellHistoryColumn("Time", "Seen", 11);
         AddCellHistoryColumn("Ping", "Avg ping", 10);
         AddCellHistoryColumn("Load", "Cell load*", 10);
@@ -959,15 +969,6 @@ internal sealed class MainForm : Form
         AddCellHistoryColumn("Confidence", "Confidence", 11);
         _cellHistoryGrid.ColumnHeaderMouseClick += (_, args) =>
             SortCellHistoryByColumn(args.ColumnIndex);
-        _cellHistoryGrid.CellClick += (_, args) =>
-        {
-            if (args.RowIndex < 0 ||
-                _cellHistoryGrid.Rows[args.RowIndex].Tag is not CellHistoryGroupRow group)
-                return;
-            if (!_collapsedTimePeriodGroups.Add(group.PeriodId))
-                _collapsedTimePeriodGroups.Remove(group.PeriodId);
-            RefreshCellHistory(force: true);
-        };
 
         var controls = new FlowLayoutPanel
         {
@@ -1073,7 +1074,7 @@ internal sealed class MainForm : Form
             "Remove the NetPulse lock and return cell and band selection to the router's automatic mode.");
         _buttonTips.SetToolTip(
             copyButton,
-            "Copy the selected profile's band, EARFCN, PCI, and optional CID.");
+            "Copy the selected profile's complete band, EARFCN, PCI, and CID identity.");
         _buttonTips.SetToolTip(
             deleteButton,
             "Delete only the selected band/cell profile from LTE History. Other profiles remain untouched.");
@@ -1104,6 +1105,17 @@ internal sealed class MainForm : Form
         _bandDiscoveryStatus.Text = "Automatic discovery is idle";
         controls.Controls.Add(_bandDiscoveryStatus);
         controls.Controls.Add(_cellAutoStatus);
+
+        _bandDiscoveryProgress.Size = new Size(220, 18);
+        _bandDiscoveryProgress.Style = ProgressBarStyle.Marquee;
+        _bandDiscoveryProgress.MarqueeAnimationSpeed = 28;
+        _bandDiscoveryProgress.Visible = false;
+        _bandDiscoveryProgress.Margin = new Padding(14, 20, 0, 0);
+        controls.Controls.Add(_bandDiscoveryProgress);
+
+        _lteProfileMutationControls.AddRange(
+            [applyButton, _experimentButton, automaticButton, copyButton,
+             deleteButton, clearButton]);
 
         layout.Controls.Add(summaryPanel, 0, 0);
         layout.Controls.Add(_cellHistoryGrid, 0, 1);
@@ -1160,7 +1172,7 @@ internal sealed class MainForm : Form
             Dock = DockStyle.Fill,
             BackColor = Color.White,
             Padding = new Padding(18, 12, 18, 12),
-            Text = "Manual TP-Link LTE Cell Lock\r\nEnter a known primary-cell profile. " +
+            Text = "Manual TP-Link LTE Band / Cell Lock\r\nBand Lock and Cell Lock work independently. Enter one PCell band; " +
                    "CID, EARFCN and PCI are required. Saving adds the profile " +
                    "to LTE history without inventing measurements. Applying always asks " +
                    "for confirmation and keeps automatic rollback protection.",
@@ -1184,12 +1196,12 @@ internal sealed class MainForm : Form
         _observedCellLockInput.DropDownStyle = ComboBoxStyle.DropDownList;
         _observedCellLockInput.SelectedIndexChanged += (_, _) =>
             UseSelectedObservedCellLockProfile();
-        _manualBandsInput.CueText = "B3 or B3 + B20";
+        _manualBandsInput.CueText = "PCell band, e.g. B3";
         _manualEarfcnInput.CueText = "Primary EARFCN";
         _manualPciInput.CueText = "0-512";
         _manualCidInput.CueText = "Required decimal or hex CID (e.g. ABCDE)";
         AddManualLockField(fields, 0, "Previously observed set", _observedCellLockInput);
-        AddManualLockField(fields, 1, "LTE band profile", _manualBandsInput);
+        AddManualLockField(fields, 1, "PCell band", _manualBandsInput);
         AddManualLockField(fields, 2, "Primary EARFCN", _manualEarfcnInput);
         AddManualLockField(fields, 3, "PCI", _manualPciInput);
         AddManualLockField(fields, 4, "CID", _manualCidInput);
@@ -1210,13 +1222,20 @@ internal sealed class MainForm : Form
         };
         var save = new Button { Text = "Save profile to history", Size = new Size(195, 40) };
         save.Click += (_, _) => SaveManualCellProfile();
-        var apply = new Button { Text = "Save and apply lock...", Size = new Size(190, 40) };
+        var bandOnly = new Button { Text = "Apply band lock", Size = new Size(155, 40) };
+        bandOnly.Click += async (_, _) => await ApplyManualBandLockAsync(bandOnly);
+        var scanOne = new Button { Text = "Scan this band", Size = new Size(150, 40) };
+        scanOne.Click += async (_, _) => await ScanManualBandAsync(scanOne);
+        var apply = new Button { Text = "Apply PCell lock", Size = new Size(160, 40) };
         apply.Click += async (_, _) => await ApplyManualCellLockAsync(apply);
         var restore = new Button { Text = "Restore automatic selection", Size = new Size(210, 40) };
         restore.Click += async (_, _) => await RestoreAutomaticCellSelectionAsync(restore);
         controls.Controls.Add(save);
+        controls.Controls.Add(bandOnly);
+        controls.Controls.Add(scanOne);
         controls.Controls.Add(apply);
         controls.Controls.Add(restore);
+        _lteProfileMutationControls.AddRange([save, bandOnly, scanOne, apply, restore]);
 
         layout.Controls.Add(explanation, 0, 0);
         layout.Controls.Add(fields, 0, 1);
@@ -1584,6 +1603,128 @@ internal sealed class MainForm : Form
         layout.Controls.Add(_eventsGrid, 0, 1);
         page.Controls.Add(layout);
         return page;
+    }
+
+    private TabPage BuildConnectedDevicesTab()
+    {
+        var page = new TabPage("Devices")
+        {
+            BackColor = Color.FromArgb(244, 247, 250),
+            Padding = new Padding(12)
+        };
+        var layout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2
+        };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var header = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 3,
+            RowCount = 1,
+            Padding = new Padding(14, 8, 14, 8),
+            Margin = new Padding(5),
+            BackColor = Color.White
+        };
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
+        header.Controls.Add(new Label
+        {
+            Text = "CONNECTED DEVICES",
+            Dock = DockStyle.Fill,
+            Font = new Font("Segoe UI", 11F, FontStyle.Bold),
+            TextAlign = ContentAlignment.MiddleLeft
+        }, 0, 0);
+        _connectedDevicesStatus.Text = "Open this tab to read the router's live device list.";
+        _connectedDevicesStatus.Dock = DockStyle.Fill;
+        _connectedDevicesStatus.AutoEllipsis = true;
+        _connectedDevicesStatus.ForeColor = Color.DimGray;
+        _connectedDevicesStatus.TextAlign = ContentAlignment.MiddleLeft;
+        header.Controls.Add(_connectedDevicesStatus, 1, 0);
+        var refresh = new Button
+        {
+            Text = "Refresh",
+            Dock = DockStyle.Fill,
+            Margin = new Padding(8, 4, 0, 4)
+        };
+        refresh.Click += async (_, _) =>
+            await RefreshConnectedDevicesAsync(showErrors: true);
+        _buttonTips.SetToolTip(refresh,
+            "Read the current active-device list directly from the TP-Link router.");
+        header.Controls.Add(refresh, 2, 0);
+
+        _connectedDevicesGrid.Dock = DockStyle.Fill;
+        _connectedDevicesGrid.Margin = new Padding(5);
+        _connectedDevicesGrid.ReadOnly = true;
+        _connectedDevicesGrid.AllowUserToAddRows = false;
+        _connectedDevicesGrid.AllowUserToDeleteRows = false;
+        _connectedDevicesGrid.AllowUserToResizeRows = false;
+        _connectedDevicesGrid.AutoGenerateColumns = false;
+        _connectedDevicesGrid.MultiSelect = false;
+        _connectedDevicesGrid.RowHeadersVisible = false;
+        _connectedDevicesGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+        _connectedDevicesGrid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
+        _connectedDevicesGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "DeviceName", HeaderText = "Device", DataPropertyName = "Name",
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, FillWeight = 34
+        });
+        _connectedDevicesGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "DeviceIp", HeaderText = "IP address", DataPropertyName = "IpAddress",
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, FillWeight = 22
+        });
+        _connectedDevicesGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "DeviceMac", HeaderText = "MAC address", DataPropertyName = "MacAddress",
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, FillWeight = 26
+        });
+        _connectedDevicesGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "DeviceConnection", HeaderText = "Connection", DataPropertyName = "ConnectionType",
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, FillWeight = 18
+        });
+
+        layout.Controls.Add(header, 0, 0);
+        layout.Controls.Add(_connectedDevicesGrid, 0, 1);
+        page.Controls.Add(layout);
+        return page;
+    }
+
+    private async Task RefreshConnectedDevicesAsync(bool showErrors)
+    {
+        if (_connectedDevicesBusy)
+            return;
+        _connectedDevicesBusy = true;
+        _connectedDevicesStatus.Text = "Reading active devices from the router…";
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            IReadOnlyList<RouterConnectedDevice> devices =
+                await _routerMonitor.ReadConnectedDevicesAsync(timeout.Token);
+            _connectedDevicesGrid.DataSource = devices.ToList();
+            _connectedDevicesStatus.Text = devices.Count == 0
+                ? "No active client devices were reported by the router."
+                : $"{devices.Count} active device{(devices.Count == 1 ? "" : "s")} · live router data · not stored";
+            _nextConnectedDevicesRefreshUtc = DateTime.UtcNow.AddSeconds(10);
+        }
+        catch (Exception ex)
+        {
+            _connectedDevicesStatus.Text = ex.Message;
+            _nextConnectedDevicesRefreshUtc = DateTime.UtcNow.AddSeconds(15);
+            if (showErrors)
+                MessageBox.Show(ex.Message, "Connected devices",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            _connectedDevicesBusy = false;
+        }
     }
 
     private TabPage BuildDiagnosticsTab()
@@ -2312,19 +2453,20 @@ internal sealed class MainForm : Form
         if (_smartCandidate is null)
         {
             _smartRecommendation.Text =
-                "Gathering at least five minutes of comparable time-of-day evidence.";
+                "Gathering CID plus at least ten minutes of SINR, RSRQ and RSRP evidence.";
             _smartApplyButton.Enabled = false;
         }
         else
         {
-            string download = _smartCandidate.AverageDownloadMbps.HasValue
-                ? $"{_smartCandidate.AverageDownloadMbps:0.##} Mbps down"
-                : "speed test still needed";
             _smartRecommendation.Text =
                 $"{_smartCandidate.Band}, EARFCN {_smartCandidate.Earfcn} - " +
-                $"{download}; {_smartCandidate.DisconnectionsPerHour:0.##} drops/h; " +
+                $"RF {_smartCandidate.WeightedScore:0.0}/100; " +
+                $"SINR {_smartCandidate.AverageSinrDb:0.#} dB, " +
+                $"RSRQ {_smartCandidate.AverageRsrqDb:0.#} dB, " +
+                $"RSRP {_smartCandidate.AverageRsrpDbm:0.#} dBm; " +
                 $"{_smartCandidate.Confidence.ToLowerInvariant()} confidence.";
-            _smartApplyButton.Enabled = !_cellLockBusy && _settings.TpLinkRouterEnabled;
+            _smartApplyButton.Enabled = !_cellLockBusy && !_bandDiscoveryActive &&
+                                        _settings.TpLinkRouterEnabled;
         }
     }
 
@@ -2335,7 +2477,6 @@ internal sealed class MainForm : Form
         if (!force && revision == _lastCellHistoryRevision &&
             period == _lastCellHistoryPeriod)
             return;
-        bool periodChanged = period != _lastCellHistoryPeriod;
         _lastCellHistoryRevision = revision;
         _lastCellHistoryPeriod = period;
 
@@ -2348,85 +2489,29 @@ internal sealed class MainForm : Form
             _cellHistory.GetRecommendations();
         IReadOnlyList<LteCellRecommendation> currentRecommendations =
             allCurrentRecommendations
+                .Where(item => !string.IsNullOrWhiteSpace(item.CellId))
                 .Where(LteCellHistoryStore.IsVisibleToUser)
                 .ToArray();
-        IReadOnlyList<LteCellRecommendation> allHistory =
-            _cellHistory.GetHistoryRecommendations();
-        IReadOnlyList<LteCellRecommendation> history = allHistory
-            .Where(LteCellHistoryStore.IsVisibleToUser)
-            .ToArray();
-        if (periodChanged)
-        {
-            _collapsedTimePeriodGroups.Clear();
-            foreach (int otherPeriod in history.Select(item => item.PeriodId).Distinct().Where(value => value != period))
-                _collapsedTimePeriodGroups.Add(otherPeriod);
-        }
         string? activeProfileKey = _cellHistory.GetActiveProfileKey();
         bool shortProfilesHidden =
-            allCurrentRecommendations.Count > currentRecommendations.Count ||
-            allHistory.Count > history.Count;
+            allCurrentRecommendations.Count > currentRecommendations.Count;
 
         CellHistoryScrollAnchor scrollAnchor = CaptureCellHistoryScrollAnchor();
-        var ranks = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (IGrouping<int, LteCellRecommendation> periodGroup in
-                 history.GroupBy(item => item.PeriodId))
-        {
-            int eligibleRank = 0;
-            foreach (LteCellRecommendation item in periodGroup)
-            {
-                ranks[GetCellHistoryRowKey(item)] = item.IsEligible
-                    ? (++eligibleRank).ToString(CultureInfo.CurrentCulture)
-                    : "-";
-            }
-        }
-
-        IEnumerable<IGrouping<int, LteCellRecommendation>> periodGroups =
-            history.GroupBy(item => item.PeriodId);
-        periodGroups = OrderTimePeriodGroups(periodGroups, period);
         var displayRows = new List<CellHistoryDisplayRow>();
-        foreach (IGrouping<int, LteCellRecommendation> group in periodGroups)
+        int eligibleRank = 0;
+        foreach (LteCellRecommendation item in SortCellHistory(currentRecommendations))
         {
-            LteCellRecommendation[] profiles = SortCellHistory(group).ToArray();
-            if (profiles.Length == 0)
-                continue;
-
-            bool collapsed = _collapsedTimePeriodGroups.Contains(group.Key);
-            LteCellRecommendation first = profiles[0];
-            string profileCount = profiles.Length == 1
-                ? "1 profile"
-                : $"{profiles.Length} profiles";
-            displayRows.Add(new CellHistoryDisplayRow(
-                $"G|{group.Key}",
-                new CellHistoryGroupRow(group.Key),
-                [
-                    "",
-                    $"{(collapsed ? "+" : "−")} {first.TimePeriod}",
-                    profileCount,
-                    "", "", "", "", "", "", "", "", "", "", ""
-                ],
-                CellHistoryRowStyle.Group));
-            if (collapsed)
-                continue;
-
-            foreach (LteCellRecommendation item in profiles)
-            {
-                bool isActive =
-                    item.PeriodId == period && string.Equals(
-                        item.Key,
-                        activeProfileKey,
-                        StringComparison.Ordinal);
-                CellHistoryRowStyle style = isActive
-                    ? CellHistoryRowStyle.Active
-                    : item.UserAdded
-                        ? CellHistoryRowStyle.UserAdded
-                        : item.IsEligible
-                            ? CellHistoryRowStyle.Eligible
-                            : CellHistoryRowStyle.Ineligible;
-                displayRows.Add(CreateCellHistoryDisplayRow(
-                    item,
-                    ranks[GetCellHistoryRowKey(item)],
-                    style));
-            }
+            bool isActive = string.Equals(item.Key, activeProfileKey,
+                StringComparison.Ordinal);
+            CellHistoryRowStyle style = isActive
+                ? CellHistoryRowStyle.Active
+                : item.UserAdded ? CellHistoryRowStyle.UserAdded
+                : item.IsEligible ? CellHistoryRowStyle.Eligible
+                : CellHistoryRowStyle.Ineligible;
+            string rank = item.IsEligible
+                ? (++eligibleRank).ToString(CultureInfo.CurrentCulture)
+                : "-";
+            displayRows.Add(CreateCellHistoryDisplayRow(item, rank, style));
         }
 
         bool rebuiltRows = ApplyCellHistoryRows(displayRows, selectedKey);
@@ -2448,8 +2533,7 @@ internal sealed class MainForm : Form
         {
             _cellSuggestion.Text =
                 "Collecting evidence: each recommendation needs at least 10 connected minutes " +
-                "and one speed test on the same band profile and primary EARFCN. " +
-                "PCI and CID are used when the firmware exposes them.";
+                "with a complete CID/EARFCN/PCI identity and measured SINR, RSRQ and RSRP.";
             _cellSuggestion.ForeColor = IsDarkThemeActive()
                 ? Color.FromArgb(246, 199, 92)
                 : Color.DarkGoldenrod;
@@ -2457,8 +2541,7 @@ internal sealed class MainForm : Form
         else if (shortProfilesHidden)
         {
             _cellSuggestion.Text =
-                "Collecting LTE history. A connection appears after 5 connected " +
-                "minutes in the same time period.";
+                "Collecting LTE history. A complete CID profile appears after 5 connected minutes.";
             _cellSuggestion.ForeColor = IsDarkThemeActive()
                 ? Color.FromArgb(246, 199, 92)
                 : Color.DarkGoldenrod;
@@ -2466,7 +2549,7 @@ internal sealed class MainForm : Form
         else
         {
             _cellSuggestion.Text =
-                "Waiting for LTE observations. PCI and CID are used only when the firmware exposes them.";
+                "Waiting for LTE observations with CID, EARFCN and PCI.";
             _cellSuggestion.ForeColor = IsDarkThemeActive()
                 ? Color.FromArgb(177, 187, 199)
                 : Color.DimGray;
@@ -2513,31 +2596,35 @@ internal sealed class MainForm : Form
         string rank,
         CellHistoryRowStyle style)
     {
+        bool hasCurrentPeriodEvidence = item.PeriodConnectedTime > TimeSpan.Zero;
         return new CellHistoryDisplayRow(
             $"R|{GetCellHistoryRowKey(item)}",
             item,
             [
                 rank,
-                item.TimePeriod,
                 item.Band,
                 item.Earfcn,
                 item.Pci,
                 item.CellId ?? "-",
-                FormatCompactDuration(item.PeriodConnectedTime),
-                FormatHistoryPing(item.AveragePingMs),
-                FormatEstimatedCellLoad(item.EstimatedCellLoadPercent),
-                $"{item.PeriodDisconnections} / {item.Disconnections}",
-                item.DisconnectionsPerHour.ToString("0.00", CultureInfo.CurrentCulture),
-                FormatMbps(item.AverageDownloadMbps),
-                FormatMbps(item.AverageUploadMbps),
-                item.Confidence
+                hasCurrentPeriodEvidence &&
+                LteRecommendationScoring.HasRadioEvidence(item)
+                    ? item.WeightedScore.ToString("0.0", CultureInfo.CurrentCulture)
+                    : "",
+                hasCurrentPeriodEvidence ? FormatCompactDuration(item.PeriodConnectedTime) : "",
+                hasCurrentPeriodEvidence ? FormatHistoryPing(item.AveragePingMs) : "",
+                hasCurrentPeriodEvidence ? FormatEstimatedCellLoad(item.EstimatedCellLoadPercent) : "",
+                hasCurrentPeriodEvidence ? $"{item.PeriodDisconnections} / {item.Disconnections}" : "",
+                hasCurrentPeriodEvidence ? item.DisconnectionsPerHour.ToString("0.00", CultureInfo.CurrentCulture) : "",
+                hasCurrentPeriodEvidence ? FormatMbps(item.AverageDownloadMbps) : "",
+                hasCurrentPeriodEvidence ? FormatMbps(item.AverageUploadMbps) : "",
+                hasCurrentPeriodEvidence ? item.Confidence : "Awaiting usage in current time period"
             ],
             style);
     }
 
     /// <summary>
     /// Keeps the grid stable during one-second telemetry updates. A full rebuild
-    /// is used only when rows are added, removed, regrouped, collapsed, or
+    /// is used only when rows are added, removed, or reordered;
     /// reordered; otherwise only cell values that actually changed are assigned.
     /// </summary>
     private bool ApplyCellHistoryRows(
@@ -2674,25 +2761,13 @@ internal sealed class MainForm : Form
 
     private static string? GetCellHistoryStructureKey(object? tag) => tag switch
     {
-        CellHistoryGroupRow group => $"G|{group.PeriodId}",
         LteCellRecommendation recommendation =>
             $"R|{GetCellHistoryRowKey(recommendation)}",
         _ => null
     };
 
     private static string GetCellHistoryRowKey(LteCellRecommendation item) =>
-        $"{item.PeriodId}|{item.Key}";
-
-    private IEnumerable<IGrouping<int, LteCellRecommendation>> OrderTimePeriodGroups(
-        IEnumerable<IGrouping<int, LteCellRecommendation>> groups,
-        int currentPeriod)
-    {
-        IOrderedEnumerable<IGrouping<int, LteCellRecommendation>> ordered = groups
-            .OrderByDescending(group => group.Key == currentPeriod);
-        return _cellHistorySortColumn == "Period" && !_cellHistorySortAscending
-            ? ordered.ThenByDescending(group => group.Key)
-            : ordered.ThenBy(group => group.Key);
-    }
+        item.Key;
 
     private CellHistoryScrollAnchor CaptureCellHistoryScrollAnchor()
     {
@@ -2707,16 +2782,13 @@ internal sealed class MainForm : Form
         }
 
         string? recommendationKey = null;
-        int? periodId = null;
         if (firstRow >= 0 && firstRow < _cellHistoryGrid.Rows.Count)
         {
             object? tag = _cellHistoryGrid.Rows[firstRow].Tag;
             if (tag is LteCellRecommendation recommendation)
                 recommendationKey = GetCellHistoryRowKey(recommendation);
-            else if (tag is CellHistoryGroupRow group)
-                periodId = group.PeriodId;
         }
-        return new CellHistoryScrollAnchor(firstRow, recommendationKey, periodId);
+        return new CellHistoryScrollAnchor(firstRow, recommendationKey);
     }
 
     private void RestoreCellHistoryScrollAnchor(CellHistoryScrollAnchor anchor)
@@ -2734,13 +2806,6 @@ internal sealed class MainForm : Form
                     GetCellHistoryRowKey(recommendation),
                     anchor.RecommendationKey,
                     StringComparison.Ordinal))
-            {
-                rowIndex = index;
-                break;
-            }
-            if (tag is CellHistoryGroupRow group &&
-                anchor.PeriodId.HasValue &&
-                group.PeriodId == anchor.PeriodId.Value)
             {
                 rowIndex = index;
                 break;
@@ -2786,11 +2851,11 @@ internal sealed class MainForm : Form
             return _cellHistorySortAscending ? source : source.Reverse();
         return _cellHistorySortColumn switch
         {
-            "Period" => OrderCellHistory(source, item => item.TimePeriod),
             "Band" => OrderCellHistory(source, item => item.Band),
             "Earfcn" => OrderCellHistory(source, item => NumericSort(item.Earfcn)),
             "Pci" => OrderCellHistory(source, item => NumericSort(item.Pci)),
             "Cid" => OrderCellHistory(source, item => NumericSort(item.CellId)),
+            "Score" => OrderCellHistory(source, item => item.WeightedScore),
             "Time" => OrderCellHistory(source, item => item.PeriodConnectedTime),
             "Ping" => OrderCellHistory(source, item => item.AveragePingMs ?? double.MaxValue),
             "Load" => OrderCellHistory(source, item => item.EstimatedCellLoadPercent ?? double.MaxValue),
@@ -2878,7 +2943,7 @@ internal sealed class MainForm : Form
             { Profile: { } profile })
             return;
 
-        _manualBandsInput.Text = profile.Band;
+        _manualBandsInput.Text = profile.PrimaryBand;
         _manualEarfcnInput.Text = profile.Earfcn;
         _manualPciInput.Text = profile.Pci == "-" ? "" : profile.Pci;
         _manualCidInput.Text = profile.CellId is null or "-" ? "" : profile.CellId;
@@ -3073,6 +3138,69 @@ internal sealed class MainForm : Form
             _nextAutomaticSmsRefreshUtc = DateTime.UtcNow.AddMinutes(30);
             SetSmsBusy(false);
         }
+    }
+
+    private bool TryReadSingleManualBand(out int band, out string error)
+    {
+        band = 0;
+        Match match = Regex.Match(_manualBandsInput.Text,
+            @"^\s*B?(?<band>\d{1,3})\s*$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (!match.Success || !int.TryParse(match.Groups["band"].Value,
+                CultureInfo.InvariantCulture, out band) || band is < 1 or > 64)
+        {
+            error = "Enter exactly one LTE PCell band from 1 to 64.";
+            return false;
+        }
+        error = "";
+        return true;
+    }
+
+    private async Task ApplyManualBandLockAsync(Button button)
+    {
+        if (!TryReadSingleManualBand(out int band, out string error))
+        {
+            MessageBox.Show(error, "Band Lock", MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+        if (MessageBox.Show(
+                $"Apply Band Lock to B{band}?\r\n\r\nCell Lock will remain disabled; " +
+                "the modem will choose the serving cell and any aggregation SCells.",
+                "Band Lock", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            return;
+        button.Enabled = false;
+        try
+        {
+            var target = new RouterCellLockTarget
+            {
+                Bands = [band], Earfcn = "", Pci = "", CellId = null
+            };
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+            await _routerMonitor.ApplyCellAndBandLockAsync(target, timeout.Token);
+            _displayedCellLockTarget = null;
+            AddCellLockEvent($"Band Lock applied to B{band}; Cell Lock disabled");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(FriendlyUiError(ex), "Band Lock",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally { button.Enabled = true; }
+    }
+
+    private async Task ScanManualBandAsync(Button button)
+    {
+        if (!TryReadSingleManualBand(out int band, out string error))
+        {
+            MessageBox.Show(error, "Single-band scan", MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+        button.Enabled = false;
+        try { await RunBandCellDiscoveryAsync(band); }
+        finally { button.Enabled = true; }
     }
 
     private void PopulateSmsGrid(string? selectedIdentity = null)
@@ -3294,6 +3422,7 @@ internal sealed class MainForm : Form
                 normalized,
                 StringComparison.Ordinal))
             .OrderBy(message => message.Timestamp ?? DateTime.MinValue)
+            .Take(1)
             .ToArray();
         if (messages.Length == 0)
         {
@@ -4257,6 +4386,7 @@ internal sealed class MainForm : Form
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             await _routerMonitor.RestoreAutomaticSelectionAsync(timeout.Token);
+            _displayedCellLockTarget = null;
             _settings.AutomaticCellLockEnabled = false;
             _settings.LastAutomaticCellLockKey = "";
             _settings.LastAutomaticCellLockUtc = null;
@@ -4295,10 +4425,12 @@ internal sealed class MainForm : Form
         if (!_settings.AutomaticCellLockEnabled ||
             !_settings.TpLinkRouterEnabled ||
             _cellLockBusy ||
-            _speedBusy ||
+            (_speedBusy && _speedTestManual) ||
             !_engine.GetSnapshot().IsOnline ||
             _settings.PendingCellLockRollback is not null)
             return;
+        if (_speedBusy)
+            CancelAutomaticSpeedTestForProfileChange("automatic LTE profile change");
         ResetAutomaticCellLockDailyCounter();
         if (!LteAutoLockPolicy.CanAttempt(_settings, now))
             return;
@@ -4357,6 +4489,8 @@ internal sealed class MainForm : Form
     {
         if (_cellLockBusy)
             return;
+        if (_speedBusy && !_speedTestManual)
+            CancelAutomaticSpeedTestForProfileChange("LTE profile change");
         _cellLockBusy = true;
         bool internetWasOnline = _engine.GetSnapshot().IsOnline;
         string profileKind = target.HasCellTarget ? "cell + band lock" : "band profile";
@@ -4368,6 +4502,7 @@ internal sealed class MainForm : Form
                 previousState = await _routerMonitor.ReadLockStateAsync(changeTimeout.Token);
                 if (LockStateMatchesTarget(previousState, target))
                 {
+                    _displayedCellLockTarget = target.HasCellTarget ? target : null;
                     if (automatic)
                     {
                         _settings.LastAutomaticCellLockUtc = DateTime.UtcNow;
@@ -4409,6 +4544,7 @@ internal sealed class MainForm : Form
 
             if (!automatic && !internetWasOnline)
             {
+                _displayedCellLockTarget = target.HasCellTarget ? target : null;
                 ClearPendingCellLock();
                 _routerDetails.Text =
                     $"{recommendation.Band} Cell Lock accepted while Internet is offline.";
@@ -4433,7 +4569,13 @@ internal sealed class MainForm : Form
                 cancellationToken);
             MonitorSnapshot internet = _engine.GetSnapshot();
             RouterTelemetry router = _routerMonitor.GetSnapshot();
-            bool valid = internet.IsOnline && MatchesTarget(router, target);
+            using var verifyTimeout =
+                new CancellationTokenSource(TimeSpan.FromSeconds(12));
+            RouterLockState appliedState = await _routerMonitor.ReadLockStateAsync(
+                verifyTimeout.Token);
+            bool valid = internet.IsOnline &&
+                         LockStateMatchesTarget(appliedState, target) &&
+                         MatchesCellIdentity(router, target);
 
             if (!valid)
             {
@@ -4459,8 +4601,12 @@ internal sealed class MainForm : Form
             }
 
             ClearPendingCellLock();
+            _displayedCellLockTarget = target.HasCellTarget ? target : null;
             AddCellLockEvent(
-                $"{recommendation.Band} {profileKind} validated successfully");
+                $"{recommendation.Band} {profileKind} validated successfully" +
+                (target.HasCellTarget
+                    ? $" • CID {target.CellId} • PCI {target.Pci} • EARFCN {target.Earfcn}"
+                    : ""));
             if (!automatic && showResult && !IsDisposed)
             {
                 MessageBox.Show(
@@ -4596,6 +4742,13 @@ internal sealed class MainForm : Form
             return false;
         }
 
+        if (string.IsNullOrWhiteSpace(recommendation.CellId))
+        {
+            target = null;
+            error = "This profile has no CID and cannot be applied safely.";
+            return false;
+        }
+
         target = new RouterCellLockTarget
         {
             Bands = bands,
@@ -4642,6 +4795,20 @@ internal sealed class MainForm : Form
             .ToArray();
         return activeBands.Length > 0 &&
                activeBands.All(target.Bands.Contains);
+    }
+
+    private static bool MatchesCellIdentity(
+        RouterTelemetry telemetry,
+        RouterCellLockTarget target)
+    {
+        if (!telemetry.IsConnected)
+            return false;
+        if (!target.HasCellTarget)
+            return true;
+        return string.Equals(telemetry.Earfcn, target.Earfcn, StringComparison.Ordinal) &&
+               string.Equals(telemetry.Pci, target.Pci, StringComparison.Ordinal) &&
+               string.Equals(telemetry.CellId, target.CellId,
+                   StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool LockStateMatchesTarget(
@@ -4727,6 +4894,7 @@ internal sealed class MainForm : Form
         if (versionDetails.Length == 0)
             versionDetails = "TP-Link router • protected local telemetry";
         MonitorSnapshot internet = _engine.GetSnapshot();
+        RouterCellLockTarget? displayedLock = GetDisplayedCellLockTarget();
         string pathStates =
             $"Router: {RouterManagementLabel(management)}  •  " +
             $"LTE: {(telemetry.IsConnected ? "registered" : "not registered")}  •  " +
@@ -4734,6 +4902,10 @@ internal sealed class MainForm : Form
         _routerDetails.Text = string.IsNullOrWhiteSpace(telemetry.Error)
             ? versionDetails + "  •  " + pathStates
             : pathStates + "  •  " + telemetry.Error;
+        if (displayedLock is not null)
+            _routerDetails.Text +=
+                $"  •  Cell Lock: CID {displayedLock.CellId}, " +
+                $"PCI {displayedLock.Pci}, EARFCN {displayedLock.Earfcn}";
 
         _routerMetrics["Status"].Text =
             $"Router {RouterManagementLabel(management)} / LTE " +
@@ -4747,9 +4919,12 @@ internal sealed class MainForm : Form
         _routerMetrics["Rsrp"].Text = FormatMeasurement(telemetry.RsrpDbm, "dBm");
         _routerMetrics["Rsrq"].Text = FormatMeasurement(telemetry.RsrqDb, "dB");
         _routerMetrics["Snr"].Text = FormatMeasurement(telemetry.SnrDb, "dB");
-        _routerMetrics["Pci"].Text = DisplayValue(telemetry.Pci);
-        _routerMetrics["Cell"].Text = DisplayValue(telemetry.CellId);
-        _routerMetrics["Earfcn"].Text = DisplayValue(telemetry.Earfcn);
+        _routerMetrics["Pci"].Text = DisplayValue(
+            IsKnownRadioIdentity(telemetry.Pci) ? telemetry.Pci : displayedLock?.Pci);
+        _routerMetrics["Cell"].Text = DisplayValue(
+            IsKnownRadioIdentity(telemetry.CellId) ? telemetry.CellId : displayedLock?.CellId);
+        _routerMetrics["Earfcn"].Text = DisplayValue(
+            IsKnownRadioIdentity(telemetry.Earfcn) ? telemetry.Earfcn : displayedLock?.Earfcn);
         _routerMetrics["Sim"].Text = DisplayValue(telemetry.SimStatus);
         _routerMetrics["Data"].Text = FormatBytes(telemetry.TotalBytes);
         _routerMetrics["RouterUpload"].Text = FormatRate(telemetry.UploadBytesPerSecond);
@@ -4758,6 +4933,28 @@ internal sealed class MainForm : Form
             ? _clock.FormatTime(telemetry.Timestamp)
             : "";
     }
+
+    private RouterCellLockTarget? GetDisplayedCellLockTarget()
+    {
+        if (_bandDiscoveryActive)
+            return null;
+        if (_displayedCellLockTarget is not null)
+            return _displayedCellLockTarget;
+        if (string.IsNullOrWhiteSpace(_settings.LastAutomaticCellLockKey))
+            return null;
+        LteCellRecommendation? saved = _cellHistory.GetHistoryRecommendations()
+            .FirstOrDefault(item => string.Equals(
+                item.Key,
+                _settings.LastAutomaticCellLockKey,
+                StringComparison.Ordinal));
+        if (saved is not null &&
+            TryCreateLockTarget(saved, out RouterCellLockTarget? target, out _))
+            _displayedCellLockTarget = target;
+        return _displayedCellLockTarget;
+    }
+
+    private static bool IsKnownRadioIdentity(string? value) =>
+        !string.IsNullOrWhiteSpace(value) && value != "-" && value != "0";
 
     private static string RouterManagementLabel(RouterManagementState state) => state switch
     {
@@ -4865,6 +5062,7 @@ internal sealed class MainForm : Form
             return;
 
         _speedBusy = true;
+        _speedTestManual = manual;
         _lastSpeedResult = null;
         _speedCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(180));
         _speedButton.Text = "Cancel speed test";
@@ -4955,6 +5153,7 @@ internal sealed class MainForm : Form
             _speedCancellation.Dispose();
             _speedCancellation = null;
             _speedBusy = false;
+            _speedTestManual = false;
             _speedButton.Text = "Run speed test now";
             _nextAutomaticSpeedTest = GetNextSpeedTime();
             RefreshDashboard();
@@ -5071,9 +5270,24 @@ internal sealed class MainForm : Form
         }
     }
 
-    private async Task RunBandCellDiscoveryAsync()
+    private void CancelAutomaticSpeedTestForProfileChange(string reason)
     {
-        if (_cellLockBusy || _speedBusy || _experimentCancellation is not null ||
+        if (!_speedBusy || _speedTestManual || _speedCancellation is null)
+            return;
+        _speedCancellation.Cancel();
+        AddLoggedEvent(new MonitorEvent
+        {
+            Kind = "SPEED",
+            Message = $"Scheduled speed test cancelled for {reason}; LTE controls remain available"
+        });
+    }
+
+    private async Task RunBandCellDiscoveryAsync(int? singleBand = null)
+    {
+        if (_speedBusy && !_speedTestManual)
+            CancelAutomaticSpeedTestForProfileChange("band and cell discovery");
+        if (_cellLockBusy || (_speedBusy && _speedTestManual) ||
+            _experimentCancellation is not null ||
             !_settings.TpLinkRouterEnabled ||
             _settings.PendingCellLockRollback is not null)
         {
@@ -5101,6 +5315,9 @@ internal sealed class MainForm : Form
             initialRouter,
             _settings.CountryCode,
             _cellHistory.GetHistoryRecommendations().Select(item => item.Band));
+        if (singleBand is int requestedBand)
+            plan = new LteBandScanPlan([requestedBand], plan.RouterProfile,
+                "user-selected single-band serving-cell scan", false);
         if (plan.Bands.Count == 0)
         {
             MessageBox.Show(
@@ -5149,7 +5366,8 @@ internal sealed class MainForm : Form
         _cellLockBusy = true;
         _bandDiscoveryActive = true;
         _bandDiscoveryButton.Text = "Cancel discovery";
-        _experimentButton.Enabled = false;
+        SetLteProfileMutationEnabled(false);
+        _bandDiscoveryProgress.Visible = true;
         _speedButton.Enabled = false;
         try
         {
@@ -5221,6 +5439,92 @@ internal sealed class MainForm : Form
                         ? $"B{band}: {identities} serving identity record(s) observed"
                         : $"B{band}: no serving cell observed"
                 });
+            }
+
+            LteBandCellObservation[] discoveredCells = results
+                .Where(item => item.Samples > 0 && item.Earfcn != "-" &&
+                               item.Pci != "-" && item.CellId != "-")
+                .GroupBy(item => string.Join('|', item.RequestedBand,
+                    item.Earfcn, item.Pci, item.CellId),
+                    StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .ToArray();
+
+            var cidBandTrials = discoveredCells
+                .SelectMany(cell => plan.Bands.Select(partner => (cell, partner)))
+                .ToArray();
+            var servedBandsByCell = new Dictionary<string, HashSet<int>>(
+                StringComparer.OrdinalIgnoreCase);
+            for (int index = 0; index < cidBandTrials.Length; index++)
+            {
+                token.ThrowIfCancellationRequested();
+                (LteBandCellObservation cell, int partner) = cidBandTrials[index];
+                _bandDiscoveryStatus.Text =
+                    $"Scanning CID {cell.CellId} with B{partner} • " +
+                    $"{index + 1}/{cidBandTrials.Length}";
+                var target = new RouterCellLockTarget
+                {
+                    Bands = [partner], Earfcn = cell.Earfcn,
+                    Pci = cell.Pci, CellId = cell.CellId
+                };
+                using var changeTimeout =
+                    CancellationTokenSource.CreateLinkedTokenSource(token);
+                changeTimeout.CancelAfter(TimeSpan.FromSeconds(20));
+                await _routerMonitor.ApplyCellAndBandLockAsync(target,
+                    changeTimeout.Token);
+                var trialResults = new List<LteBandCellObservation>();
+                await CollectBandDiscoverySamplesAsync(partner,
+                    index + 1, cidBandTrials.Length, secondsPerBand,
+                    trialResults, token);
+                string cellKey = string.Join('|', cell.Earfcn, cell.Pci,
+                    cell.CellId);
+                if (trialResults.Any(item => item.Samples > 0 &&
+                        string.Equals(item.CellId, cell.CellId,
+                            StringComparison.OrdinalIgnoreCase)))
+                {
+                    if (!servedBandsByCell.TryGetValue(cellKey,
+                            out HashSet<int>? served))
+                        servedBandsByCell[cellKey] = served = [];
+                    served.Add(partner);
+                }
+                foreach (LteBandCellObservation observation in trialResults)
+                    AccumulateDiscoveryObservation(results, observation);
+            }
+
+            var servingSets = discoveredCells
+                .Select(cell => new
+                {
+                    Cell = cell,
+                    Key = string.Join('|', cell.Earfcn, cell.Pci, cell.CellId)
+                })
+                .Where(item => servedBandsByCell.TryGetValue(item.Key,
+                    out HashSet<int>? served) && served.Count > 0)
+                .ToArray();
+            for (int index = 0; index < servingSets.Length; index++)
+            {
+                token.ThrowIfCancellationRequested();
+                LteBandCellObservation set = servingSets[index].Cell;
+                int[] servedBands = servedBandsByCell[servingSets[index].Key]
+                    .OrderBy(band => band == set.RequestedBand ? 0 : 1)
+                    .ThenBy(band => band)
+                    .ToArray();
+                _bandDiscoveryStatus.Text =
+                    $"Measuring {string.Join(" + ", servedBands.Select(b => "B" + b))} " +
+                    $"/ CID {set.CellId} • " +
+                    $"{index + 1}/{servingSets.Length}";
+                var target = new RouterCellLockTarget
+                {
+                    Bands = servedBands, Earfcn = set.Earfcn,
+                    Pci = set.Pci, CellId = set.CellId
+                };
+                using var changeTimeout =
+                    CancellationTokenSource.CreateLinkedTokenSource(token);
+                changeTimeout.CancelAfter(TimeSpan.FromSeconds(20));
+                await _routerMonitor.ApplyCellAndBandLockAsync(target,
+                    changeTimeout.Token);
+                await CollectBandDiscoverySamplesAsync(set.RequestedBand,
+                    index + 1, servingSets.Length, secondsPerBand,
+                    results, token, requireSingleBand: false);
             }
         }
         catch (OperationCanceledException)
@@ -5305,7 +5609,8 @@ internal sealed class MainForm : Form
             _bandDiscoveryCancellation = null;
             _bandDiscoveryButton.Text = "Scan bands & cells";
             _bandDiscoveryButton.Enabled = true;
-            _experimentButton.Enabled = true;
+            _bandDiscoveryProgress.Visible = false;
+            SetLteProfileMutationEnabled(true);
             _speedButton.Enabled = true;
             _bandDiscoveryStatus.Text = restored
                 ? "Automatic discovery is idle • candidates saved • previous router state restored"
@@ -5337,13 +5642,22 @@ internal sealed class MainForm : Form
         }
     }
 
+    private void SetLteProfileMutationEnabled(bool enabled)
+    {
+        foreach (Control control in _lteProfileMutationControls)
+            control.Enabled = enabled;
+        if (!enabled)
+            _smartApplyButton.Enabled = false;
+    }
+
     private async Task CollectBandDiscoverySamplesAsync(
         int band,
         int position,
         int totalBands,
         int seconds,
         List<LteBandCellObservation> results,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool requireSingleBand = true)
     {
         DateTime deadline = DateTime.UtcNow.AddSeconds(seconds);
         // Ignore the first snapshots after the write; they can still describe
@@ -5360,7 +5674,8 @@ internal sealed class MainForm : Form
             if (LteBandDiscovery.TryReadServingCell(
                     band,
                     sample,
-                    out LteBandCellObservation? observation) &&
+                    out LteBandCellObservation? observation,
+                    requireSingleBand) &&
                 observation is not null)
             {
                 AccumulateDiscoveryObservation(results, observation);
@@ -5421,7 +5736,10 @@ internal sealed class MainForm : Form
 
     private async Task RunCellExperimentAsync()
     {
-        if (_cellLockBusy || _speedBusy || !_settings.TpLinkRouterEnabled)
+        if (_speedBusy && !_speedTestManual)
+            CancelAutomaticSpeedTestForProfileChange("controlled LTE experiment");
+        if (_cellLockBusy || (_speedBusy && _speedTestManual) ||
+            !_settings.TpLinkRouterEnabled)
         {
             MessageBox.Show(
                 "Connect TP-Link monitoring and wait for any current router or speed-test " +
@@ -5446,8 +5764,8 @@ internal sealed class MainForm : Form
         if (candidates.Count < 2)
         {
             MessageBox.Show(
-                "At least two eligible measured profiles are required in the current " +
-                "time period. Keep monitoring and run comparable speed tests first.",
+                "At least two eligible profiles with complete CID and radio-quality " +
+                "evidence are required. Keep monitoring SINR, RSRQ and RSRP first.",
                 "Controlled Cell Experiment",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
@@ -5799,17 +6117,16 @@ internal sealed class MainForm : Form
             _settings.Save();
             if (result.UpdateAvailable)
             {
-                _availableUpdateUrl = result.ReleaseUrl;
-                _updateButton.Text = $"Open {result.LatestVersion}";
+                _availableUpdate = result;
+                _updateButton.Text = $"Install {result.LatestVersion}";
                 _updateStatus.Text = result.Message + Environment.NewLine +
-                    "Opening the release is always a user action.";
+                    $"Source: {result.Source}. Installation keeps this executable path and Windows identity.";
                 if (interactive)
-                    MessageBox.Show(result.Message, "NetPulse update",
-                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    await InstallAvailableUpdateAsync(result);
             }
             else
             {
-                _availableUpdateUrl = "";
+                _availableUpdate = null;
                 _updateButton.Text = "Check for updates";
                 RefreshUpdateStatus();
                 if (interactive)
@@ -5833,6 +6150,48 @@ internal sealed class MainForm : Form
         finally
         {
             _updateButton.Enabled = true;
+        }
+    }
+
+    private async Task InstallAvailableUpdateAsync(UpdateCheckResult update)
+    {
+        DialogResult answer = MessageBox.Show(
+            $"Download and install NetPulse {update.LatestVersion} now?\r\n\r\n" +
+            "NetPulse will close, replace the application at the same path, and restart automatically. Your settings, taskbar pin, startup entry, and tray identity stay unchanged.",
+            "Install NetPulse update",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Information);
+        if (answer != DialogResult.Yes)
+            return;
+
+        _updateButton.Enabled = false;
+        _updateButton.Text = "Downloading 0%";
+        _updateStatus.Text = $"Preparing NetPulse {update.LatestVersion}…";
+        try
+        {
+            var progress = new Progress<int>(percent =>
+            {
+                _updateButton.Text = $"Downloading {percent}%";
+                _updateStatus.Text =
+                    $"Downloading and verifying NetPulse {update.LatestVersion}… {percent}%";
+            });
+            using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(6));
+            await ApplicationUpdater.StageAndLaunchAsync(update, progress, timeout.Token);
+            _updateStatus.Text = "Update verified. Restarting NetPulse at the same path…";
+            _allowExit = true;
+            _trayIcon.Visible = false;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            _updateButton.Enabled = true;
+            _updateButton.Text = $"Install {update.LatestVersion}";
+            _updateStatus.Text = "The update was not installed; the current version is unchanged.";
+            MessageBox.Show(
+                FriendlyUiError(ex),
+                "NetPulse update",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
         }
     }
 
@@ -6604,7 +6963,6 @@ internal sealed class MainForm : Form
         return $"{Math.Max(1, (int)duration.TotalSeconds)} s";
     }
 
-    private sealed record CellHistoryGroupRow(int PeriodId);
     private sealed record SmsConversationRow(string Address);
 
     private enum CellHistoryRowStyle
@@ -6630,6 +6988,5 @@ internal sealed class MainForm : Form
     }
     private sealed record CellHistoryScrollAnchor(
         int RowIndex,
-        string? RecommendationKey,
-        int? PeriodId);
+        string? RecommendationKey);
 }

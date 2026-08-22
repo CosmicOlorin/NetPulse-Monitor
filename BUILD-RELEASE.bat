@@ -20,6 +20,6 @@ if errorlevel 1 (
 
 echo.
 echo BUILD COMPLETED SUCCESSFULLY
-echo Output: artifacts\publish\win-x64\NetPulseMonitor.exe
+echo Output: artifacts\publish\win-x64\NetPulse Monitor.exe
 pause
 exit /b 0

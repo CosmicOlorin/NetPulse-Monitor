@@ -24,6 +24,9 @@ internal sealed class LteCellRecommendation
     public double? AverageUploadMbps { get; init; }
     public double? AveragePingMs { get; init; }
     public double? EstimatedCellLoadPercent { get; init; }
+    public double? AverageSinrDb { get; init; }
+    public double? AverageRsrqDb { get; init; }
+    public double? AverageRsrpDbm { get; init; }
     public double WeightedScore { get; set; }
     public int PeriodId { get; init; }
     public required string TimePeriod { get; init; }
@@ -172,7 +175,7 @@ internal sealed class LteCellHistoryStore : IDisposable
             record.Samples++;
             periodStats.Samples++;
             periodStats.LastSeenUtc = Later(periodStats.LastSeenUtc, observedUtc);
-            AddRadioSample(record, telemetry);
+            AddRadioSample(record, periodStats, telemetry);
             _lastKnownKey = record.Key;
             _lastKnownCellUtc = observedUtc;
             MarkDirty();
@@ -323,6 +326,7 @@ internal sealed class LteCellHistoryStore : IDisposable
     }
 
     internal static bool IsVisibleToUser(LteCellRecommendation item) =>
+        item.ConnectedTime >= MinimumVisiblePeriodTime ||
         item.PeriodConnectedTime >= MinimumVisiblePeriodTime ||
         item.DiscoveryCandidate ||
         (item.UserAdded && item.ConnectedTime <= TimeSpan.Zero);
@@ -845,22 +849,29 @@ internal sealed class LteCellHistoryStore : IDisposable
 
     private static void AddRadioSample(
         LteCellHistoryRecord record,
+        LteTimeBucketRecord period,
         RouterTelemetry telemetry)
     {
         if (telemetry.RsrpDbm.HasValue)
         {
             record.RsrpSamples++;
             record.RsrpTotal += telemetry.RsrpDbm.Value;
+            period.RsrpSamples++;
+            period.RsrpTotal += telemetry.RsrpDbm.Value;
         }
         if (telemetry.RsrqDb.HasValue)
         {
             record.RsrqSamples++;
             record.RsrqTotal += telemetry.RsrqDb.Value;
+            period.RsrqSamples++;
+            period.RsrqTotal += telemetry.RsrqDb.Value;
         }
         if (telemetry.SnrDb.HasValue)
         {
             record.SnrSamples++;
             record.SnrTotal += telemetry.SnrDb.Value;
+            period.SnrSamples++;
+            period.SnrTotal += telemetry.SnrDb.Value;
         }
     }
 
@@ -875,10 +886,12 @@ internal sealed class LteCellHistoryStore : IDisposable
             {
                 Period = periodId
             };
+        bool hasRadioEvidence = record.SnrSamples > 0 &&
+                                record.RsrqSamples > 0 &&
+                                record.RsrpSamples > 0;
         bool eligible = record.CellId is not null &&
                         record.ConnectedSeconds >= MinimumObservationSeconds &&
-                        record.SpeedTests >= MinimumSpeedTests &&
-                        record.DownloadSamples > 0;
+                        hasRadioEvidence;
 
         double globalDropRate = RatePerHour(
             record.Disconnections,
@@ -930,7 +943,9 @@ internal sealed class LteCellHistoryStore : IDisposable
         string confidence = !eligible
             ? record.ConnectedSeconds < MinimumObservationSeconds
                 ? "Gathering data"
-                : "Needs speed test"
+                : !hasRadioEvidence
+                    ? "Needs SINR/RSRQ/RSRP"
+                    : "CID required"
             : period.ConnectedSeconds >= 60 * 60 && period.SpeedTests >= 2
                 ? "High"
                 : period.ConnectedSeconds >= 30 * 60 && period.SpeedTests >= 1
@@ -963,6 +978,12 @@ internal sealed class LteCellHistoryStore : IDisposable
                 evidenceWeight),
             AveragePingMs = averagePing,
             EstimatedCellLoadPercent = estimatedCellLoad,
+            AverageSinrDb = Blend(Average(record.SnrTotal, record.SnrSamples),
+                Average(period.SnrTotal, period.SnrSamples), evidenceWeight),
+            AverageRsrqDb = Blend(Average(record.RsrqTotal, record.RsrqSamples),
+                Average(period.RsrqTotal, period.RsrqSamples), evidenceWeight),
+            AverageRsrpDbm = Blend(Average(record.RsrpTotal, record.RsrpSamples),
+                Average(period.RsrpTotal, period.RsrpSamples), evidenceWeight),
             PeriodId = periodId,
             TimePeriod = GetTimePeriodLabel(periodId),
             PeriodConnectedTime = TimeSpan.FromSeconds(period.ConnectedSeconds),
@@ -1094,6 +1115,12 @@ internal sealed class LteCellHistoryStore : IDisposable
                     record.UserAdded || IsLockReadyRecord(record);
             }
             RepairLoadedRecords(loaded);
+            // Older builds could persist band-only observations. They cannot be
+            // safely compared or locked because the same radio channel may be
+            // served by multiple cells. Never invent a CID: discard these
+            // obsolete, ambiguous records during migration.
+            loaded.Records.RemoveAll(record =>
+                string.IsNullOrWhiteSpace(record.CellId));
             loaded.Version = HistoryFormatVersion;
             repaired = versionChanged ||
                        !string.Equals(
@@ -1532,5 +1559,11 @@ internal sealed class LteCellHistoryStore : IDisposable
         public double UploadTotalMbps { get; set; }
         public int PingSamples { get; set; }
         public double PingTotalMs { get; set; }
+        public int RsrpSamples { get; set; }
+        public double RsrpTotal { get; set; }
+        public int RsrqSamples { get; set; }
+        public double RsrqTotal { get; set; }
+        public int SnrSamples { get; set; }
+        public double SnrTotal { get; set; }
     }
 }

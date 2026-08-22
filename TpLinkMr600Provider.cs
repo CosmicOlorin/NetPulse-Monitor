@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Reflection;
 
 namespace NetPulseMonitor;
 
@@ -13,6 +14,7 @@ internal sealed class TpLinkMr600Provider :
     IRouterCellLockProvider,
     IRouterMobileNetworkModeProvider,
     IRouterSmsProvider,
+    IRouterConnectedDevicesProvider,
     IRouterRebootProvider
 {
     private const string DefaultTokenId = "abcd";
@@ -74,8 +76,10 @@ internal sealed class TpLinkMr600Provider :
             Timeout = Timeout.InfiniteTimeSpan,
             MaxResponseContentBufferSize = 1024 * 1024
         };
+        string appVersion = Assembly.GetExecutingAssembly().GetName().Version?
+            .ToString(3) ?? "1.0";
         _client.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "NetPulseMonitor/1.0.8 (Windows; TP-Link local telemetry)");
+            $"NetPulseMonitor/{appVersion} (Windows; TP-Link local telemetry)");
         _client.DefaultRequestHeaders.Referrer = _routerUri;
         // The MR600 login page sets this cookie in JavaScript. Non-browser
         // clients must set it explicitly or some firmware builds omit the
@@ -441,6 +445,70 @@ internal sealed class TpLinkMr600Provider :
             .ThenByDescending(message => message.Timestamp)
             .ThenBy(message => message.Folder)
             .ToArray();
+    }
+
+    public async Task<IReadOnlyList<RouterConnectedDevice>> ReadConnectedDevicesAsync(
+        CancellationToken cancellationToken)
+    {
+        EnsureConnected();
+        CgiResponse response = await SendActionsAsync(
+            [new RouterAction(
+                5,
+                "LAN_HOST_ENTRY",
+                ZeroStack,
+                ZeroStack,
+                ["IPAddress", "MACAddress", "hostName", "X_TP_ConnType", "active"])],
+            cancellationToken);
+
+        return response.GetObjects(0)
+            .Select(item => new RouterConnectedDevice
+            {
+                Name = FirstNonEmpty(item.Get("hostName"), "Unknown device"),
+                IpAddress = FirstNonEmpty(item.Get("IPAddress"), "-"),
+                MacAddress = NormalizeMacAddress(item.Get("MACAddress")),
+                ConnectionType = FormatConnectionType(item.Get("X_TP_ConnType")),
+                IsActive = ParseInt(item.Get("active")) is not 0
+            })
+            .Where(device => device.IsActive)
+            .Where(device => device.IpAddress != "-" || device.MacAddress != "-")
+            .GroupBy(device => device.MacAddress != "-"
+                    ? device.MacAddress
+                    : device.IpAddress,
+                StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .OrderBy(device => device.Name.Equals(
+                "Unknown device", StringComparison.OrdinalIgnoreCase))
+            .ThenBy(device => device.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(device => device.IpAddress, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static string NormalizeMacAddress(string? value)
+    {
+        string candidate = value?.Trim() ?? "";
+        if (candidate.Length == 0)
+            return "-";
+        string hex = new(candidate.Where(char.IsAsciiHexDigit).ToArray());
+        return hex.Length == 12
+            ? string.Join(":", Enumerable.Range(0, 6)
+                .Select(index => hex.Substring(index * 2, 2).ToUpperInvariant()))
+            : candidate.ToUpperInvariant();
+    }
+
+    private static string FormatConnectionType(string? value)
+    {
+        string candidate = value?.Trim() ?? "";
+        if (candidate.Length == 0)
+            return "Unknown";
+        if (candidate.Contains("wireless", StringComparison.OrdinalIgnoreCase) ||
+            candidate.Contains("wifi", StringComparison.OrdinalIgnoreCase) ||
+            candidate.Contains("wlan", StringComparison.OrdinalIgnoreCase))
+            return "Wi-Fi";
+        if (candidate.Contains("ethernet", StringComparison.OrdinalIgnoreCase) ||
+            candidate.Contains("wired", StringComparison.OrdinalIgnoreCase) ||
+            candidate.Equals("LAN", StringComparison.OrdinalIgnoreCase))
+            return "Ethernet";
+        return candidate;
     }
 
     private async Task<IReadOnlyList<RouterSmsMessage>> ReadSmsFolderAsync(

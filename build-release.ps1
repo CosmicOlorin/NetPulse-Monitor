@@ -14,21 +14,29 @@ if (-not (Test-Path -LiteralPath $dotnet)) {
 }
 
 $output = Join-Path $projectRoot "artifacts\publish\$Runtime"
-& $dotnet restore (Join-Path $projectRoot "NetPulseMonitor.sln") `
-    --configfile (Join-Path $projectRoot "NuGet.Config") -p:NuGetAudit=false
-if ($LASTEXITCODE -ne 0) { throw "Restore failed." }
+$desktopProject = Join-Path $projectRoot "NetPulseMonitor.csproj"
+$protocolTests = Join-Path $projectRoot "tests\NetPulseMonitor.ProtocolTests\NetPulseMonitor.ProtocolTests.csproj"
+$companionCore = Join-Path $projectRoot "mobile\NetPulse.Companion.Core\NetPulse.Companion.Core.csproj"
+
+foreach ($project in @($desktopProject, $protocolTests, $companionCore)) {
+    & $dotnet restore $project `
+        --configfile (Join-Path $projectRoot "NuGet.Config") -p:NuGetAudit=false
+    if ($LASTEXITCODE -ne 0) { throw "Restore failed for $project." }
+}
 & $dotnet restore (Join-Path $projectRoot "NetPulseMonitor.csproj") -r $Runtime `
     --configfile (Join-Path $projectRoot "NuGet.Config") -p:NuGetAudit=false
 if ($LASTEXITCODE -ne 0) { throw "Runtime restore failed." }
-& $dotnet build (Join-Path $projectRoot "NetPulseMonitor.sln") -c Release --no-restore
-if ($LASTEXITCODE -ne 0) { throw "Build failed." }
+foreach ($project in @($desktopProject, $protocolTests, $companionCore)) {
+    & $dotnet build $project -c Release --no-restore -p:NuGetAudit=false
+    if ($LASTEXITCODE -ne 0) { throw "Build failed for $project." }
+}
 & $dotnet publish (Join-Path $projectRoot "NetPulseMonitor.csproj") -c Release -r $Runtime --no-restore `
     --self-contained true -p:PublishSingleFile=true `
     -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None `
     -p:DebugSymbols=false -o $output
 if ($LASTEXITCODE -ne 0) { throw "Publish failed." }
 
-$executable = Join-Path $output "NetPulseMonitor.exe"
+$executable = Join-Path $output "NetPulse Monitor.exe"
 if ($SigningCertificateThumbprint) {
     & (Join-Path $projectRoot "sign-release.ps1") `
         -Files $executable `
@@ -44,6 +52,10 @@ $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $package).Hash.ToLowerInvar
 $hashFile = "$package.sha256"
 Set-Content -LiteralPath $hashFile -Value "$hash  $(Split-Path $package -Leaf)" `
     -Encoding ascii
+$executableHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $executable).Hash.ToLowerInvariant()
+$executableHashFile = "$executable.sha256"
+Set-Content -LiteralPath $executableHashFile `
+    -Value "$executableHash  $(Split-Path $executable -Leaf)" -Encoding ascii
 
 if ($BuildInstaller) {
     $compiler = Get-Command ISCC.exe -ErrorAction SilentlyContinue

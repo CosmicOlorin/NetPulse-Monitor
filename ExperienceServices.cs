@@ -307,9 +307,10 @@ internal static class CellExperimentEvaluator
             .Select(item => new CellExperimentResult(
                 item,
                 item.WeightedScore,
-                $"50% download, 40% disconnects, 10% upload; " +
-                $"{item.DisconnectionsPerHour:0.##} drops/h, " +
-                $"{item.AverageDownloadMbps?.ToString("0.##") ?? "no"} Mbps down"))
+                $"50% SINR, 35% RSRQ, 15% RSRP; " +
+                $"SINR {item.AverageSinrDb?.ToString("0.#") ?? "--"} dB, " +
+                $"RSRQ {item.AverageRsrqDb?.ToString("0.#") ?? "--"} dB, " +
+                $"RSRP {item.AverageRsrpDbm?.ToString("0.#") ?? "--"} dBm"))
             .ToArray();
     }
 }

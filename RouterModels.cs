@@ -94,6 +94,15 @@ internal sealed class RouterSmsMessage
         $"{Folder}|{Index}|{TimeText}|{Address}|{Content}";
 }
 
+internal sealed class RouterConnectedDevice
+{
+    public string Name { get; init; } = "Unknown device";
+    public string IpAddress { get; init; } = "-";
+    public string MacAddress { get; init; } = "-";
+    public string ConnectionType { get; init; } = "Unknown";
+    public bool IsActive { get; init; }
+}
+
 internal sealed class RouterCellLockTarget
 {
     public required IReadOnlyList<int> Bands { get; init; }
@@ -200,6 +209,12 @@ internal interface IRouterSmsProvider
     Task SaveSmsDraftAsync(
         string phoneNumber,
         string content,
+        CancellationToken cancellationToken);
+}
+
+internal interface IRouterConnectedDevicesProvider
+{
+    Task<IReadOnlyList<RouterConnectedDevice>> ReadConnectedDevicesAsync(
         CancellationToken cancellationToken);
 }
 
