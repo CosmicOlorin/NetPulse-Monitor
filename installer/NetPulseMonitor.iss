@@ -1,7 +1,7 @@
 #define MyAppName "NetPulse Monitor"
-#define MyAppVersion "1.0.8"
+#define MyAppVersion "1.0.16"
 #define MyAppPublisher "CosmicOlorin"
-#define MyAppExeName "NetPulseMonitor.exe"
+#define MyAppExeName "NetPulse Monitor.exe"
 
 [Setup]
 AppId={{7C4EE3E3-84E9-48E3-AEDB-510DDDC3EC98}
@@ -32,7 +32,7 @@ VersionInfoCopyright=Copyright (c) 2026 CosmicOlorin
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "..\artifacts\publish\win-x64\NetPulseMonitor.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\artifacts\publish\win-x64\NetPulse Monitor.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\NetPulse Monitor"; Filename: "{app}\{#MyAppExeName}"
@@ -43,3 +43,4 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch NetPulse Monitor"; Flags: nowait postinstall skipifsilent
+
