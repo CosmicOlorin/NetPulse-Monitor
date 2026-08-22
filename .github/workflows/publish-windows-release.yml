@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version without the v prefix (for example 1.0.16)
+        description: Version without the v prefix (for example 1.0.17)
         required: true
         type: string
 
@@ -50,13 +50,17 @@ jobs:
           dotnet run --project tests/NetPulseMonitor.ProtocolTests/NetPulseMonitor.ProtocolTests.csproj `
             -c Release -p:NuGetAudit=false
 
+      - name: Install .NET MAUI Android workload
+        run: dotnet workload install maui-android --skip-manifest-update
+
       - name: Package release
         shell: pwsh
         run: |
           $version = '${{ inputs.version }}'.Trim()
           $out = Join-Path $PWD 'release-assets'
           $publish = Join-Path $PWD 'release-publish'
-          New-Item -ItemType Directory -Path $out, $publish -Force | Out-Null
+          $bundle = Join-Path $PWD 'release-bundle'
+          New-Item -ItemType Directory -Path $out, $publish, $bundle -Force | Out-Null
 
           dotnet publish NetPulseMonitor.csproj `
             -c Release `
@@ -74,11 +78,28 @@ jobs:
             throw 'The Windows GUI executable was not created.'
           }
 
+          dotnet restore mobile/NetPulse.Companion.App/NetPulse.Companion.App.csproj `
+            -p:NuGetAudit=false
+          dotnet publish mobile/NetPulse.Companion.App/NetPulse.Companion.App.csproj `
+            -f net8.0-android `
+            -c Release `
+            -p:AndroidPackageFormats=apk `
+            -p:NuGetAudit=false
+          $apk = Get-ChildItem mobile/NetPulse.Companion.App/bin/Release/net8.0-android `
+            -Recurse -Filter '*-Signed.apk' | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+          if (-not $apk) {
+            throw 'The signed Companion APK was not created.'
+          }
+
           $exeName = "NetPulse-Monitor-v$version-win-x64.exe"
           $zipName = "NetPulse-Monitor-v$version-win-x64.zip"
           $sourceName = "NetPulse-Monitor-v$version-source.zip"
+          $apkName = "NetPulse-Monitor-Companion-Android-v$version.apk"
           Copy-Item -LiteralPath $builtExe -Destination (Join-Path $out $exeName)
-          Compress-Archive -LiteralPath $builtExe -DestinationPath (Join-Path $out $zipName)
+          Copy-Item -LiteralPath $apk.FullName -Destination (Join-Path $out $apkName)
+          Copy-Item -LiteralPath $builtExe -Destination (Join-Path $bundle 'NetPulse Monitor.exe')
+          Copy-Item -LiteralPath $apk.FullName -Destination (Join-Path $bundle 'NetPulse-Monitor-Companion-Android.apk')
+          Compress-Archive -Path (Join-Path $bundle '*') -DestinationPath (Join-Path $out $zipName)
           $sourceZip = Join-Path $out $sourceName
           git archive --format=zip --output=$sourceZip HEAD
           Copy-Item -LiteralPath "RELEASE-NOTES-$version.md" -Destination $out
