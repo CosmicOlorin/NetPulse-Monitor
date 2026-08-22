@@ -8,6 +8,9 @@
   to 75 seconds; it is never saved as a lock-ready cell without CID.
 - Stage 2 locks each discovered PCell while all bands actually found in Stage 1
   are available and records the ordered aggregation sets created by the modem.
+- When the MR600 hides CID/PCI after adding an SCell, Stages 2 and 3 retain the
+  actively locked PCell identity only while its primary band and EARFCN remain
+  unchanged.
 - Stage 3 reapplies and measures every unique PCell + ordered band set, then
   stores its real radio samples in LTE History.
 - B20 + B3 and B3 + B20 remain separate profiles because the first band is the
