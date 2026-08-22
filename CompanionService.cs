@@ -208,8 +208,8 @@ internal sealed class CompanionService : IAsyncDisposable
                     sha256 = Convert.ToHexString(await SHA256.HashDataAsync(source, cancellationToken));
                 string info = JsonSerializer.Serialize(new
                 {
-                    displayVersion = "1.0.15",
-                    versionCode = 9,
+                    displayVersion = "1.0.17",
+                    versionCode = 10,
                     size = apk.Length,
                     sha256,
                     downloadPath = "/download/android"
