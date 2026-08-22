@@ -5814,6 +5814,12 @@ internal sealed class MainForm : Form
                 observation is not null)
             {
                 sawServingProfile = true;
+                if (requiredIdentity is not null)
+                {
+                    observation = LteBandDiscovery.RetainLockedPcellIdentity(
+                        requiredIdentity,
+                        observation);
+                }
                 if (requiredIdentity is null ||
                     MatchesDiscoveryIdentity(requiredIdentity, observation))
                 {
@@ -5829,8 +5835,11 @@ internal sealed class MainForm : Form
                             stableIdentityKey = observation.IdentityKey;
                             stableIdentitySamples = 1;
                         }
-                        if (recordHistory)
-                            _cellHistory.RecordTelemetry(sample);
+                    if (recordHistory)
+                    {
+                        _cellHistory.RecordTelemetry(
+                            WithDiscoveryIdentity(sample, observation));
+                    }
                     }
                     else
                     {
@@ -5862,6 +5871,37 @@ internal sealed class MainForm : Form
             StringComparison.OrdinalIgnoreCase) &&
         string.Equals(expected.CellId, observed.CellId,
             StringComparison.OrdinalIgnoreCase);
+
+    private static RouterTelemetry WithDiscoveryIdentity(
+        RouterTelemetry sample,
+        LteBandCellObservation observation) => new()
+    {
+        Timestamp = sample.Timestamp,
+        IsConnected = sample.IsConnected,
+        Status = sample.Status,
+        ProviderName = sample.ProviderName,
+        Model = sample.Model,
+        Isp = sample.Isp,
+        NetworkType = sample.NetworkType,
+        Band = sample.Band,
+        PrimaryBand = sample.PrimaryBand,
+        SimStatus = sample.SimStatus,
+        SignalPercent = sample.SignalPercent,
+        RsrpDbm = sample.RsrpDbm,
+        RsrqDb = sample.RsrqDb,
+        SnrDb = sample.SnrDb,
+        RssiDbm = sample.RssiDbm,
+        Pci = observation.Pci,
+        CellId = observation.CellId,
+        Earfcn = observation.Earfcn,
+        UnreadSmsCount = sample.UnreadSmsCount,
+        TotalBytes = sample.TotalBytes,
+        UploadBytesPerSecond = sample.UploadBytesPerSecond,
+        DownloadBytesPerSecond = sample.DownloadBytesPerSecond,
+        HardwareVersion = sample.HardwareVersion,
+        FirmwareVersion = sample.FirmwareVersion,
+        Error = sample.Error
+    };
 
     private static void AccumulateDiscoveryObservation(
         List<LteBandCellObservation> results,
