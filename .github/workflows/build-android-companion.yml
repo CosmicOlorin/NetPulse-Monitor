@@ -1,0 +1,48 @@
+name: Build Android Companion
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install .NET MAUI Android workload
+        run: dotnet workload install maui-android --skip-manifest-update
+
+      - name: Restore Companion
+        run: dotnet restore mobile/NetPulse.Companion.App/NetPulse.Companion.App.csproj -p:NuGetAudit=false
+
+      - name: Publish APK
+        shell: pwsh
+        run: |
+          dotnet publish mobile/NetPulse.Companion.App/NetPulse.Companion.App.csproj `
+            -f net8.0-android `
+            -c Release `
+            -p:AndroidPackageFormats=apk `
+            -p:NuGetAudit=false
+          $apk = Get-ChildItem mobile/NetPulse.Companion.App/bin/Release/net8.0-android `
+            -Recurse -Filter '*-Signed.apk' | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+          if (-not $apk) { throw 'The signed Companion APK was not created.' }
+          New-Item -ItemType Directory -Path artifacts/android -Force | Out-Null
+          Copy-Item -LiteralPath $apk.FullName `
+            -Destination artifacts/android/NetPulse-Monitor-Companion-Android.apk
+
+      - name: Upload Companion APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetPulse-Monitor-Companion-Android-v1.0.17
+          path: artifacts/android/NetPulse-Monitor-Companion-Android.apk
+          if-no-files-found: error
+          retention-days: 14

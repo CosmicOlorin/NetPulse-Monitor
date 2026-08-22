@@ -8,7 +8,7 @@ diagnostics and ISP-ready evidence.**
 · [Security policy](.github/SECURITY.md)
 · [Privacy notice](PRIVACY.md)
 
-NetPulse Monitor 1.0.16 is a native .NET 8 WinForms application for continuous
+NetPulse Monitor 1.0.17 is a native .NET 8 WinForms application for continuous
 Windows connection monitoring. It runs as a graphical Windows application and
 does not open a console window during normal use.
 
@@ -54,7 +54,8 @@ endorsed by or supported by TP-Link or any mobile/internet provider.
 - Cancelable Band & Cell Discovery mode with a verified per-model band plan,
   serving-cell capture and exact router-state restoration
 - Ungrouped LTE history with sortable columns and preserved PCell identity
-- Searchable SMS conversation and timeline views combining Inbox, Sent and Drafts
+- Complete chronological Inbox/Sent conversation threads, a separate Drafts view,
+  and a newest-first message timeline on Windows and Android
 - Country-aware phone matching joins national, `+` and `00` number formats
 - Stable SMS refresh, one alert per unread message, verified read/unread state, deletion and sending
 - Local SMS contact names for saved phone numbers
@@ -390,4 +391,3 @@ issue. See [`SECURITY.md`](.github/SECURITY.md) for the reporting process and
 Copyright © 2026 CosmicOlorin. All rights reserved. NetPulse Monitor is an
 independent project and is not affiliated with or endorsed by TP-Link or any
 internet/mobile provider. See [`COPYRIGHT.md`](COPYRIGHT.md).
-

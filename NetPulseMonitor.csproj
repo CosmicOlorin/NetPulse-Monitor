@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -13,7 +13,7 @@
     <Company>CosmicOlorin</Company>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\NetPulse.ico</ApplicationIcon>
-    <Version>1.0.16</Version>
+    <Version>1.0.17</Version>
     <Authors>CosmicOlorin</Authors>
     <Copyright>Copyright © 2026 CosmicOlorin. All rights reserved.</Copyright>
     <Description>Windows Internet, LTE router, outage, SMS, and speed monitor.</Description>
@@ -33,4 +33,3 @@
   </ItemGroup>
 
 </Project>
-

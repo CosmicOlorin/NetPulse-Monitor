@@ -1557,15 +1557,49 @@ static void TestExperienceServices()
             Stack = "2", Index = "2", Address = "+301", Content = "Reply",
             TimeText = "2026-01-02", Timestamp = new DateTime(2026, 1, 2),
             Folder = RouterSmsFolder.Sent
+        },
+        new RouterSmsMessage
+        {
+            Stack = "3", Index = "3", Address = "+301", Content = "Unsent only",
+            TimeText = "2026-01-03", Timestamp = new DateTime(2026, 1, 3),
+            Folder = RouterSmsFolder.Draft
         }
     ];
     SmsConversation conversation = SmsConversationBuilder.Build(messages, contacts).Single();
     Require(conversation.DisplayName == "Support" && conversation.UnreadCount == 1 &&
+            conversation.Messages.Count == 2 &&
             conversation.Messages[0].Content == "First" &&
             conversation.Messages[1].Content == "Reply",
-        "SMS conversations must combine Inbox and Sent chronologically per contact.");
+        "SMS conversations must combine Inbox and Sent chronologically without mixing drafts.");
     Require(SmsConversationBuilder.Build(messages, contacts, "reply").Count == 1,
         "SMS conversation search should match message content.");
+    Require(SmsConversationBuilder.Build(messages, contacts, "Unsent only").Count == 0,
+        "Draft content must not leak into conversation search results.");
+    IReadOnlyList<RouterSmsMessage> thread =
+        SmsConversationBuilder.MessagesForAddress(messages, "+301");
+    Require(thread.Count == 2 && thread[0].Content == "First" &&
+            thread[1].Content == "Reply",
+        "Rendering a conversation must return the complete Inbox/Sent thread.");
+
+    MobileSmsMessage[] mobileMessages =
+    [
+        new("1", "1", 1, "+306991234567", "Hello", "12:00",
+            new DateTime(2026, 8, 1, 12, 0, 0), "Inbox", true, "inbox-1"),
+        new("2", "2", 1, "6991234567", "Reply", "12:01",
+            new DateTime(2026, 8, 1, 12, 1, 0), "Sent", false, "sent-2"),
+        new("3", "3", 1, "00306991234567", "Unsent", "12:02",
+            new DateTime(2026, 8, 1, 12, 2, 0), "Draft", false, "draft-3")
+    ];
+    IReadOnlyList<MobileSmsListItem> mobileConversations =
+        MobileSmsOrganizer.Conversations(mobileMessages);
+    IReadOnlyList<MobileSmsListItem> mobileDrafts =
+        MobileSmsOrganizer.Drafts(mobileMessages);
+    Require(mobileConversations.Count == 1 &&
+            mobileConversations[0].Messages.Count == 2 &&
+            mobileConversations[0].Messages[0].Content == "Hello" &&
+            mobileConversations[0].Messages[1].Content == "Reply" &&
+            mobileDrafts.Count == 1 && mobileDrafts[0].Preview == "Unsent",
+        "Companion conversations must group number variants while keeping drafts in their own view.");
 
     RouterSmsMessage[] greekNumberVariants =
     [
@@ -1774,4 +1808,3 @@ static LteCellRecommendation RadioProfile(double sinr, double rsrq, double rsrp)
         AverageRsrqDb = rsrq,
         AverageRsrpDbm = rsrp
     };
-

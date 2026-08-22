@@ -192,9 +192,11 @@ remains 50% SINR, 35% RSRQ and 15% RSRP.
 ## SMS
 
 The **SMS** tab uses the SIM installed in the MR600. **Conversations** groups
-Inbox, Sent and Draft entries by contact/number and keeps each conversation in
-chronological order; **Timeline** shows the full newest-first list. Search matches
-saved contact names, numbers and message text in memory only.
+Inbox and Sent entries by contact/number and keeps the complete thread in
+chronological order. **Drafts** is a separate view that loads an unsent message
+back into the composer, while **Timeline** shows Inbox and Sent newest first.
+Search applies only to the active view and matches saved contact names, numbers
+and message text in memory.
 
 - unread count is obtained with the regular one-second LTE status update;
 - Windows queues one notification for each newly discovered unread message;
@@ -206,7 +208,7 @@ saved contact names, numbers and message text in memory only.
   only then is the content displayed;
 - a refresh preserves the selected message and scroll position instead of moving
   the selection to another row;
-- Inbox, Sent and Draft messages appear in one newest-first timeline;
+- drafts never appear inside a conversation or the Inbox/Sent timeline;
 - drafts have **Time unavailable** because the MR600 does not expose a draft
   timestamp;
 - selecting an unread message displays it and marks it read on the router;
@@ -339,4 +341,3 @@ Settings controls use fixed-height, vertically centered rows so labels and
 inputs remain aligned on tall and high-DPI screens. Diagnostics uses five
 flexible result rows plus a dedicated button row, preventing overlap at the
 minimum window size.
-
