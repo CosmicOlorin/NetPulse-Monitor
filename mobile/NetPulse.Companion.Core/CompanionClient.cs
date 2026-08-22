@@ -40,6 +40,73 @@ public sealed record MobileSmsMessage(string Stack, string Index, int PageNumber
 {
     public string? ContactName { get; init; }
     public string DisplayAddress => string.IsNullOrWhiteSpace(ContactName) ? Address : $"{ContactName} · {Address}";
+    public bool IsDraft => string.Equals(Folder, "Draft", StringComparison.OrdinalIgnoreCase);
+    public bool IsInbox => string.Equals(Folder, "Inbox", StringComparison.OrdinalIgnoreCase);
+    public bool IsOutgoing => string.Equals(Folder, "Sent", StringComparison.OrdinalIgnoreCase) || IsDraft;
+    public string FolderLabel => IsDraft ? "DRAFT" : Folder.ToUpperInvariant();
+}
+
+public sealed record MobileSmsListItem(
+    string Address,
+    string DisplayAddress,
+    IReadOnlyList<MobileSmsMessage> Messages,
+    bool IsDraft)
+{
+    public MobileSmsMessage Latest => Messages[^1];
+    public string Preview => Latest.Content;
+    public string TimeText => Latest.TimeText;
+    public int UnreadCount => Messages.Count(message => message.IsUnread);
+    public string SummaryLabel => IsDraft
+        ? "DRAFT"
+        : UnreadCount > 0
+            ? $"{Messages.Count} message{(Messages.Count == 1 ? "" : "s")} · {UnreadCount} unread"
+            : $"{Messages.Count} message{(Messages.Count == 1 ? "" : "s")}";
+}
+
+public static class MobileSmsOrganizer
+{
+    public static IReadOnlyList<MobileSmsListItem> Conversations(
+        IEnumerable<MobileSmsMessage> messages) => messages
+        .Where(message => !message.IsDraft)
+        .GroupBy(message => PhoneIdentity(message.Address), StringComparer.Ordinal)
+        .Select(group =>
+        {
+            MobileSmsMessage[] thread = group
+                .OrderBy(message => message.Timestamp ?? DateTime.MinValue)
+                .ThenBy(message => message.Identity, StringComparer.Ordinal)
+                .ToArray();
+            MobileSmsMessage latest = thread[^1];
+            return new MobileSmsListItem(
+                latest.Address,
+                latest.DisplayAddress,
+                thread,
+                IsDraft: false);
+        })
+        .OrderByDescending(item => item.Latest.Timestamp ?? DateTime.MinValue)
+        .ThenBy(item => item.DisplayAddress, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    public static IReadOnlyList<MobileSmsListItem> Drafts(
+        IEnumerable<MobileSmsMessage> messages) => messages
+        .Where(message => message.IsDraft)
+        .OrderByDescending(message => message.Timestamp ?? DateTime.MinValue)
+        .ThenByDescending(message => message.Identity, StringComparer.Ordinal)
+        .Select(message => new MobileSmsListItem(
+            message.Address,
+            message.DisplayAddress,
+            [message],
+            IsDraft: true))
+        .ToArray();
+
+    public static bool SameAddress(string left, string right) =>
+        string.Equals(PhoneIdentity(left), PhoneIdentity(right),
+            StringComparison.Ordinal);
+
+    private static string PhoneIdentity(string value)
+    {
+        string digits = new(value.Where(char.IsDigit).ToArray());
+        return digits.Length > 10 ? digits[^10..] : digits;
+    }
 }
 public sealed record MobileLteProfile(
     string Key, string Band, string PrimaryBand, string Earfcn, string Pci,
@@ -53,6 +120,19 @@ public sealed record MobileLteProfile(
 
     private static string Display(string? value) =>
         string.IsNullOrWhiteSpace(value) || value == "-" ? "—" : value;
+}
+
+public sealed record MobileConnectedDevice(
+    string Name,
+    string IpAddress,
+    string MacAddress,
+    string ConnectionType,
+    bool IsActive)
+{
+    public string DisplayName => string.IsNullOrWhiteSpace(Name)
+        ? "Unknown device"
+        : Name;
+    public string AddressSummary => $"{IpAddress}  ·  {MacAddress}";
 }
 
 public sealed class CompanionClient : IDisposable
@@ -90,6 +170,11 @@ public sealed class CompanionClient : IDisposable
             : message).ToList();
     }
 
+    public Task<List<MobileConnectedDevice>> ReadConnectedDevicesAsync(
+        CancellationToken token = default) =>
+        SendEncryptedAsync<List<MobileConnectedDevice>>(
+            HttpMethod.Get, "/v1/devices", null, token);
+
     private static string PhoneIdentity(string value)
     {
         string digits = new(value.Where(char.IsDigit).ToArray());
@@ -98,6 +183,8 @@ public sealed class CompanionClient : IDisposable
     public Task SetSmsUnreadAsync(MobileSmsMessage sms, bool unread, CancellationToken token = default) => SendActionAsync("/v1/sms/unread", new { sms.Stack, sms.Index, sms.PageNumber, sms.Folder, Unread = unread }, token);
     public Task DeleteSmsAsync(MobileSmsMessage sms, CancellationToken token = default) => SendActionAsync("/v1/sms/delete", new { sms.Stack, sms.Index, sms.PageNumber, sms.Folder, Unread = false }, token);
     public Task SendSmsAsync(string phoneNumber, string content, CancellationToken token = default) => SendActionAsync("/v1/sms/send", new { PhoneNumber = phoneNumber, Content = content }, token);
+    public Task ApplyLteBandLockAsync(int band, CancellationToken token = default) =>
+        SendActionAsync("/v1/lte/lock", new { Bands = new[] { band }, Earfcn = "", Pci = "", CellId = (string?)null }, token);
     public async Task<List<MobileLteProfile>> ReadLteHistoryAsync(CancellationToken token = default)
     {
         List<MobileLteProfile> profiles = await SendEncryptedAsync<List<MobileLteProfile>>(HttpMethod.Get, "/v1/lte/history", null, token);
