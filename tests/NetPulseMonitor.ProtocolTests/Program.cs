@@ -1420,15 +1420,19 @@ static async Task TestCompanionProtocolAsync()
     string testApkPath = Path.Combine(AppContext.BaseDirectory, "NetPulse-Monitor-Companion-Android.apk");
     byte[] testApk = [0x50, 0x4B, 0x03, 0x04, 0x4E, 0x50];
     await File.WriteAllBytesAsync(testApkPath, testApk);
-    using (HttpResponseMessage download = await client.GetAsync("download/android"))
+    using (HttpResponseMessage unsignedDownload = await client.GetAsync("download/android"))
+    {
+        Require(unsignedDownload.StatusCode == HttpStatusCode.Unauthorized,
+            "The direct Android download endpoint must reject requests without its download token.");
+    }
+    string protectedDownload = CompanionService.BuildAndroidDownloadUri(port, secret);
+    using (HttpResponseMessage download = await client.GetAsync(new Uri(protectedDownload).PathAndQuery))
     {
         Require(download.IsSuccessStatusCode &&
                 download.Content.Headers.ContentType?.MediaType == "application/vnd.android.package-archive" &&
                 (await download.Content.ReadAsByteArrayAsync()).SequenceEqual(testApk),
             "The direct LAN Android download endpoint did not return the APK.");
     }
-    File.Delete(testApkPath);
-
     PairingProfile parsedProfile = PairingProfile.Parse(service.PairingUri);
     using (var mobileClient = new CompanionClient(
                parsedProfile with { Host = "127.0.0.1" }))
@@ -1437,7 +1441,30 @@ static async Task TestCompanionProtocolAsync()
         Require(mobileSnapshot.InternetOnline && mobileSnapshot.PrimaryBand == "B1" &&
                 mobileSnapshot.UploadBytesPerSecond == 125_000 && mobileSnapshot.DownloadBytesPerSecond == 250_000,
             "The shared mobile client could not authenticate and decrypt desktop telemetry.");
+
+        AndroidAppRelease release = await mobileClient.ReadAndroidAppReleaseAsync();
+        string cacheDirectory = Path.Combine(
+            Path.GetTempPath(),
+            $"NetPulse-update-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(cacheDirectory);
+        string requestedPath = Path.Combine(cacheDirectory, $"NetPulse-{release.DisplayVersion}.apk");
+        await File.WriteAllBytesAsync(requestedPath, [0x00]);
+        string downloadedPath;
+        await using (var lockedPackage = new FileStream(
+            requestedPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read))
+        {
+            downloadedPath = await mobileClient.DownloadAndroidUpdateAsync(release, requestedPath);
+        }
+        Require(!string.Equals(downloadedPath, requestedPath, StringComparison.OrdinalIgnoreCase) &&
+                File.Exists(downloadedPath) &&
+                (await File.ReadAllBytesAsync(downloadedPath)).SequenceEqual(testApk),
+            "The Android updater must complete through a unique package when an older cached APK is locked.");
+        Directory.Delete(cacheDirectory, true);
     }
+    File.Delete(testApkPath);
 
     using HttpResponseMessage unauthorized = await client.GetAsync("v1/snapshot");
     Require(unauthorized.StatusCode == HttpStatusCode.Unauthorized,
