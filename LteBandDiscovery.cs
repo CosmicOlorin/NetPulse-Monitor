@@ -32,6 +32,9 @@ internal sealed record LteBandCellObservation(
         Pci,
         CellId);
 
+    public bool HasCompleteIdentity =>
+        Earfcn != "-" && Pci != "-" && CellId != "-";
+
     public LteBandCellObservation Merge(LteBandCellObservation sample) => this with
     {
         RsrpDbm = sample.RsrpDbm ?? RsrpDbm,
@@ -156,7 +159,7 @@ internal static class LteBandDiscovery
         string earfcn = CleanRadioValue(telemetry.Earfcn);
         string pci = CleanRadioValue(telemetry.Pci);
         string cellId = CleanRadioValue(telemetry.CellId);
-        bool identifiersExposed = earfcn != "-" || pci != "-" || cellId != "-";
+        bool completeIdentity = earfcn != "-" && pci != "-" && cellId != "-";
         DateTime observed = telemetry.Timestamp == default
             ? DateTime.Now
             : telemetry.Timestamp;
@@ -173,9 +176,9 @@ internal static class LteBandDiscovery
             observed,
             observed,
             1,
-            identifiersExposed
-                ? "Serving cell observed"
-                : "Band available; identifiers not exposed");
+            completeIdentity
+                ? "Complete serving PCell observed"
+                : "Serving band observed; waiting for complete EARFCN/PCI/CID");
         return true;
     }
 
@@ -201,3 +204,4 @@ internal static class LteBandDiscovery
             ? ""
             : value.Trim();
 }
+
