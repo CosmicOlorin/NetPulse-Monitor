@@ -8,7 +8,7 @@ diagnostics and ISP-ready evidence.**
 · [Security policy](.github/SECURITY.md)
 · [Privacy notice](PRIVACY.md)
 
-NetPulse Monitor 1.0.15 is a native .NET 8 WinForms application for continuous
+NetPulse Monitor 1.0.16 is a native .NET 8 WinForms application for continuous
 Windows connection monitoring. It runs as a graphical Windows application and
 does not open a console window during normal use.
 
@@ -90,21 +90,28 @@ as a generic credential in Windows Credential Manager. CSV logs are stored in
 ## Band & Cell Discovery
 
 Choose **Scan bands & cells** in **LTE history** to run a controlled,
-single-band discovery pass. For the detected Archer MR600(EU) V5 profile,
+three-stage discovery pass. For the detected Archer MR600(EU) V5 profile,
 NetPulse scans the complete documented set B1, B3, B5, B7, B8, B20, B28, B38,
 B40 and B41. Unknown router revisions are restricted to bands already observed;
 NetPulse does not send speculative lock masks.
 
-Each band is selected for 30 seconds. After stale pre-change snapshots are
-discarded, NetPulse records each distinct serving profile and any EARFCN, PCI,
-CID, RSRP, RSRQ and SNR exposed by the modem. A band-only scan discovers serving
-cells selected by the router; it cannot reveal a private neighbor-cell list that
-the router API does not provide. Intentional scan changes are excluded from LTE
-recommendation evidence and do not trigger speed tests. Results are appended to
-`band-cell-discovery.csv` with full identifiers. Every result with a verified
-EARFCN, PCI and CID is also inserted into the normal LTE History grid as an unranked,
-lock-ready candidate. Previously stored exact profiles from earlier releases
-are restored to the same candidate flow; no synthetic measurements are added.
+Stage 1 selects each band alone for at least 30 seconds. When the modem has
+registered but has not yet exposed all identifiers, NetPulse waits up to 75
+seconds for a stable, repeated EARFCN/PCI/CID identity before moving to the next
+band. Stage 2 locks each complete PCell while making every actually discovered
+band available, then records the ordered aggregation sets created by the modem.
+Stage 3 reapplies and measures every unique PCell + ordered band set. B20 + B3
+and B3 + B20 remain different because the first band is the PCell.
+
+After stale pre-change snapshots are discarded, NetPulse records each distinct
+serving profile and its EARFCN, PCI, CID, RSRP, RSRQ and SNR. A band-only scan
+discovers serving cells selected by the router; it cannot reveal a private
+neighbor-cell list that the router API does not provide. Intentional scan
+changes are excluded from outage attribution and do not trigger speed tests.
+Results are appended to `band-cell-discovery.csv`. Only results with a verified
+EARFCN, PCI and CID are inserted into LTE History as lock-ready candidates; the
+stage-3 radio samples are recorded as real measurement evidence. No identifiers
+or measurements are invented.
 
 Hover over any LTE History action for a concise explanation. Use **Delete
 selected profile...** to remove one identity while preserving every other
@@ -227,9 +234,12 @@ primary-cell/band-combination profile. When PCI is available it can apply a cell
 + band lock; otherwise it applies only the measured band mask and explicitly
 leaves cell selection automatic. It never invents missing identifiers.
 
-Serving EARFCN, PCI and CID come only from live LTE status. The configured Cell
-Lock target is never used as a telemetry fallback. When carrier aggregation is
-added and the PCell remains unchanged, missing identifiers can be carried only
+Serving EARFCN comes from live LTE status. On validated MR600 V5 firmware,
+PCI/CID may be exposed only by the live `LTE_CELL_LOCK` status object after the
+modem registers. NetPulse accepts that live identity only when its reported
+EARFCN exactly matches the current live serving EARFCN, preventing a stale lock
+target from being assigned to a new PCell. When carrier aggregation is added
+and the PCell remains unchanged, missing identifiers can also be carried only
 from the immediately previous live state. Legacy band/EARFCN mismatches are
 repaired once and unambiguous duplicate rows are merged while preserving their
 measurement totals.
@@ -380,3 +390,4 @@ issue. See [`SECURITY.md`](.github/SECURITY.md) for the reporting process and
 Copyright © 2026 CosmicOlorin. All rights reserved. NetPulse Monitor is an
 independent project and is not affiliated with or endorsed by TP-Link or any
 internet/mobile provider. See [`COPYRIGHT.md`](COPYRIGHT.md).
+
