@@ -93,7 +93,7 @@ public partial class MainPage : ContentPage
                     UpdateProgressBar.Progress = value;
                     UpdateStatusLabel.Text = $"Downloading version {release.DisplayVersion}… {value:P0}";
                 });
-                await _client.DownloadAndroidUpdateAsync(release, apkPath, progress);
+                apkPath = await _client.DownloadAndroidUpdateAsync(release, apkPath, progress);
                 UpdateStatusLabel.Text = "Download verified. Confirm installation in Android.";
                 await Launcher.Default.OpenAsync(new OpenFileRequest("Install NetPulse update", new ReadOnlyFile(apkPath)));
             }
