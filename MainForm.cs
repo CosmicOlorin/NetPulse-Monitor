@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 
 using System.Globalization;
 using System.Reflection;
@@ -5331,21 +5331,26 @@ internal sealed class MainForm : Form
         }
 
         const int secondsPerBand = 30;
+        const int completeIdentityWaitSeconds = 75;
         string bands = string.Join(", ", plan.Bands.Select(item => "B" + item));
         string coverage = plan.IsComplete
             ? "This is the verified complete band plan for the detected router profile."
             : "Only bands already observed on this unverified router profile will be scanned.";
-        int estimatedMinutes = (int)Math.Ceiling(
+        int firstStageMinutes = (int)Math.Ceiling(
             plan.Bands.Count * secondsPerBand / 60D);
         if (MessageBox.Show(
-                $"Scan {plan.Bands.Count} bands ({bands}) for approximately " +
-                $"{estimatedMinutes} minutes?\r\n\r\n{coverage}\r\n\r\n" +
-                "The modem will use one band at a time, so brief internet " +
-                "interruptions are expected. NetPulse will collect every distinct " +
-                "serving EARFCN/PCI/CID exposed during each 30-second window, add " +
-                "each lock-ready identity to LTE History as an unranked candidate, " +
-                "write the discovery CSV, and restore the exact current router " +
-                "state when finished or cancelled.",
+                $"Run the complete three-stage scan for {plan.Bands.Count} bands " +
+                $"({bands})? Stage 1 needs at least {firstStageMinutes} minutes; " +
+                "the total duration depends on how many real cells and aggregation " +
+                $"sets are found.\r\n\r\n{coverage}\r\n\r\n" +
+                "1. Lock each band alone and wait for a complete PCell " +
+                "EARFCN/PCI/CID identity.\r\n" +
+                "2. Lock each discovered PCell while all serving bands are " +
+                "available, and record every aggregation set the modem creates.\r\n" +
+                "3. Reapply and measure every unique PCell + ordered band set.\r\n\r\n" +
+                "Brief internet interruptions are expected. Results are saved to " +
+                "LTE History only with a complete CID, and the exact previous " +
+                "router state is restored when finished or cancelled.",
                 "Band & Cell Discovery",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning,
@@ -5393,7 +5398,8 @@ internal sealed class MainForm : Form
                 token.ThrowIfCancellationRequested();
                 int band = plan.Bands[index];
                 _bandDiscoveryStatus.Text =
-                    $"Scanning B{band} • {index + 1}/{plan.Bands.Count}";
+                    $"Stage 1/3 • scanning B{band} alone • " +
+                    $"{index + 1}/{plan.Bands.Count}";
                 var target = new RouterCellLockTarget
                 {
                     Bands = [band],
@@ -5409,13 +5415,19 @@ internal sealed class MainForm : Form
                     await _routerMonitor.ApplyCellAndBandLockAsync(
                         target,
                         changeTimeout.Token);
+                    var bandResults = new List<LteBandCellObservation>();
                     await CollectBandDiscoverySamplesAsync(
                         band,
                         index + 1,
                         plan.Bands.Count,
                         secondsPerBand,
-                        results,
-                        token);
+                        bandResults,
+                        token,
+                        waitForCompleteIdentity: true,
+                        maximumSeconds: completeIdentityWaitSeconds,
+                        stageLabel: "Stage 1/3");
+                    foreach (LteBandCellObservation observation in bandResults)
+                        AccumulateDiscoveryObservation(results, observation);
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested)
                 {
@@ -5431,100 +5443,202 @@ internal sealed class MainForm : Form
                 if (!results.Any(item => item.RequestedBand == band))
                     results.Add(LteBandCellObservation.NotObserved(band));
                 int identities = results.Count(item =>
+                    item.RequestedBand == band && item.Samples > 0 &&
+                    item.HasCompleteIdentity);
+                bool servingBandSeen = results.Any(item =>
                     item.RequestedBand == band && item.Samples > 0);
                 AddLoggedEvent(new MonitorEvent
                 {
                     Kind = "LTE DISCOVERY",
                     Message = identities > 0
-                        ? $"B{band}: {identities} serving identity record(s) observed"
-                        : $"B{band}: no serving cell observed"
+                        ? $"Stage 1/3 • B{band}: {identities} complete PCell " +
+                          "identity record(s) observed"
+                        : servingBandSeen
+                            ? $"Stage 1/3 • B{band}: serving band observed but " +
+                              "complete EARFCN/PCI/CID was not exposed"
+                            : $"Stage 1/3 • B{band}: no serving cell observed"
                 });
             }
 
             LteBandCellObservation[] discoveredCells = results
-                .Where(item => item.Samples > 0 && item.Earfcn != "-" &&
-                               item.Pci != "-" && item.CellId != "-")
+                .Where(item => item.Samples > 0 && item.HasCompleteIdentity)
                 .GroupBy(item => string.Join('|', item.RequestedBand,
                     item.Earfcn, item.Pci, item.CellId),
                     StringComparer.OrdinalIgnoreCase)
                 .Select(group => group.First())
                 .ToArray();
 
-            var cidBandTrials = discoveredCells
-                .SelectMany(cell => plan.Bands.Select(partner => (cell, partner)))
-                .ToArray();
-            var servedBandsByCell = new Dictionary<string, HashSet<int>>(
-                StringComparer.OrdinalIgnoreCase);
-            for (int index = 0; index < cidBandTrials.Length; index++)
+            if (discoveredCells.Length == 0)
             {
-                token.ThrowIfCancellationRequested();
-                (LteBandCellObservation cell, int partner) = cidBandTrials[index];
                 _bandDiscoveryStatus.Text =
-                    $"Scanning CID {cell.CellId} with B{partner} • " +
-                    $"{index + 1}/{cidBandTrials.Length}";
-                var target = new RouterCellLockTarget
+                    "Stage 1/3 found no complete PCell identity; " +
+                    "Stages 2 and 3 cannot run";
+                AddLoggedEvent(new MonitorEvent
                 {
-                    Bands = [partner], Earfcn = cell.Earfcn,
-                    Pci = cell.Pci, CellId = cell.CellId
-                };
-                using var changeTimeout =
-                    CancellationTokenSource.CreateLinkedTokenSource(token);
-                changeTimeout.CancelAfter(TimeSpan.FromSeconds(20));
-                await _routerMonitor.ApplyCellAndBandLockAsync(target,
-                    changeTimeout.Token);
-                var trialResults = new List<LteBandCellObservation>();
-                await CollectBandDiscoverySamplesAsync(partner,
-                    index + 1, cidBandTrials.Length, secondsPerBand,
-                    trialResults, token);
-                string cellKey = string.Join('|', cell.Earfcn, cell.Pci,
-                    cell.CellId);
-                if (trialResults.Any(item => item.Samples > 0 &&
-                        string.Equals(item.CellId, cell.CellId,
-                            StringComparison.OrdinalIgnoreCase)))
-                {
-                    if (!servedBandsByCell.TryGetValue(cellKey,
-                            out HashSet<int>? served))
-                        servedBandsByCell[cellKey] = served = [];
-                    served.Add(partner);
-                }
-                foreach (LteBandCellObservation observation in trialResults)
-                    AccumulateDiscoveryObservation(results, observation);
+                    Kind = "LTE DISCOVERY ERROR",
+                    Message = "Stage 1/3 observed no complete EARFCN/PCI/CID; " +
+                              "Stages 2 and 3 were not executed"
+                });
             }
-
-            var servingSets = discoveredCells
-                .Select(cell => new
-                {
-                    Cell = cell,
-                    Key = string.Join('|', cell.Earfcn, cell.Pci, cell.CellId)
-                })
-                .Where(item => servedBandsByCell.TryGetValue(item.Key,
-                    out HashSet<int>? served) && served.Count > 0)
-                .ToArray();
-            for (int index = 0; index < servingSets.Length; index++)
+            else
             {
-                token.ThrowIfCancellationRequested();
-                LteBandCellObservation set = servingSets[index].Cell;
-                int[] servedBands = servedBandsByCell[servingSets[index].Key]
-                    .OrderBy(band => band == set.RequestedBand ? 0 : 1)
-                    .ThenBy(band => band)
+                int[] availableBands = discoveredCells
+                    .Select(item => item.RequestedBand)
+                    .Distinct()
+                    .Order()
                     .ToArray();
-                _bandDiscoveryStatus.Text =
-                    $"Measuring {string.Join(" + ", servedBands.Select(b => "B" + b))} " +
-                    $"/ CID {set.CellId} • " +
-                    $"{index + 1}/{servingSets.Length}";
-                var target = new RouterCellLockTarget
+                var stageTwoSets = new List<LteBandCellObservation>();
+                for (int index = 0; index < discoveredCells.Length; index++)
                 {
-                    Bands = servedBands, Earfcn = set.Earfcn,
-                    Pci = set.Pci, CellId = set.CellId
-                };
-                using var changeTimeout =
-                    CancellationTokenSource.CreateLinkedTokenSource(token);
-                changeTimeout.CancelAfter(TimeSpan.FromSeconds(20));
-                await _routerMonitor.ApplyCellAndBandLockAsync(target,
-                    changeTimeout.Token);
-                await CollectBandDiscoverySamplesAsync(set.RequestedBand,
-                    index + 1, servingSets.Length, secondsPerBand,
-                    results, token, requireSingleBand: false);
+                    token.ThrowIfCancellationRequested();
+                    LteBandCellObservation cell = discoveredCells[index];
+                    _bandDiscoveryStatus.Text =
+                        $"Stage 2/3 • scanning aggregation sets for CID " +
+                        $"{cell.CellId} • {index + 1}/{discoveredCells.Length}";
+                    var target = new RouterCellLockTarget
+                    {
+                        Bands = availableBands,
+                        Earfcn = cell.Earfcn,
+                        Pci = cell.Pci,
+                        CellId = cell.CellId
+                    };
+                    try
+                    {
+                        using var changeTimeout =
+                            CancellationTokenSource.CreateLinkedTokenSource(token);
+                        changeTimeout.CancelAfter(TimeSpan.FromSeconds(20));
+                        await _routerMonitor.ApplyCellAndBandLockAsync(
+                            target, changeTimeout.Token);
+                        var trialResults = new List<LteBandCellObservation>();
+                        await CollectBandDiscoverySamplesAsync(
+                            cell.RequestedBand,
+                            index + 1,
+                            discoveredCells.Length,
+                            secondsPerBand,
+                            trialResults,
+                            token,
+                            requireSingleBand: false,
+                            waitForCompleteIdentity: true,
+                            maximumSeconds: completeIdentityWaitSeconds,
+                            requiredIdentity: cell,
+                            stageLabel: "Stage 2/3");
+                        foreach (LteBandCellObservation observation in trialResults)
+                        {
+                            AccumulateDiscoveryObservation(stageTwoSets, observation);
+                            AccumulateDiscoveryObservation(results, observation);
+                        }
+                        int setsFound = trialResults
+                            .Where(item => item.HasCompleteIdentity)
+                            .Select(item => item.IdentityKey)
+                            .Distinct(StringComparer.Ordinal)
+                            .Count();
+                        AddLoggedEvent(new MonitorEvent
+                        {
+                            Kind = "LTE DISCOVERY",
+                            Message = setsFound > 0
+                                ? $"Stage 2/3 • CID {cell.CellId}: " +
+                                  $"{setsFound} serving aggregation set(s) observed"
+                                : $"Stage 2/3 • CID {cell.CellId}: no matching " +
+                                  "serving aggregation set observed"
+                        });
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        AddLoggedEvent(new MonitorEvent
+                        {
+                            Kind = "LTE DISCOVERY ERROR",
+                            Message = $"Stage 2/3 • CID {cell.CellId}: " +
+                                      FriendlyUiError(ex)
+                        });
+                    }
+                }
+
+                LteBandCellObservation[] servingSets = stageTwoSets
+                    .Where(item => item.Samples > 0 && item.HasCompleteIdentity)
+                    .GroupBy(item => item.IdentityKey, StringComparer.Ordinal)
+                    .Select(group => group.First())
+                    .ToArray();
+                if (servingSets.Length == 0)
+                {
+                    _bandDiscoveryStatus.Text =
+                        "Stage 2/3 found no aggregation set; Stage 3 cannot run";
+                    AddLoggedEvent(new MonitorEvent
+                    {
+                        Kind = "LTE DISCOVERY ERROR",
+                        Message = "Stage 2/3 found no complete cell-qualified " +
+                                  "aggregation set; Stage 3 was not executed"
+                    });
+                }
+                for (int index = 0; index < servingSets.Length; index++)
+                {
+                    token.ThrowIfCancellationRequested();
+                    LteBandCellObservation set = servingSets[index];
+                    int[] setBands = LteBandDiscovery
+                        .ExtractBands(set.ServingProfile)
+                        .ToArray();
+                    if (setBands.Length == 0)
+                        continue;
+                    _bandDiscoveryStatus.Text =
+                        $"Stage 3/3 • measuring {set.ServingProfile} / CID " +
+                        $"{set.CellId} • {index + 1}/{servingSets.Length}";
+                    var target = new RouterCellLockTarget
+                    {
+                        Bands = setBands,
+                        Earfcn = set.Earfcn,
+                        Pci = set.Pci,
+                        CellId = set.CellId
+                    };
+                    try
+                    {
+                        using var changeTimeout =
+                            CancellationTokenSource.CreateLinkedTokenSource(token);
+                        changeTimeout.CancelAfter(TimeSpan.FromSeconds(20));
+                        await _routerMonitor.ApplyCellAndBandLockAsync(
+                            target, changeTimeout.Token);
+                        var measuredResults = new List<LteBandCellObservation>();
+                        await CollectBandDiscoverySamplesAsync(
+                            set.RequestedBand,
+                            index + 1,
+                            servingSets.Length,
+                            secondsPerBand,
+                            measuredResults,
+                            token,
+                            requireSingleBand: false,
+                            waitForCompleteIdentity: true,
+                            maximumSeconds: completeIdentityWaitSeconds,
+                            requiredIdentity: set,
+                            recordHistory: true,
+                            stageLabel: "Stage 3/3");
+                        foreach (LteBandCellObservation observation in measuredResults)
+                            AccumulateDiscoveryObservation(results, observation);
+                        AddLoggedEvent(new MonitorEvent
+                        {
+                            Kind = "LTE DISCOVERY",
+                            Message = measuredResults.Any(item => item.HasCompleteIdentity)
+                                ? $"Stage 3/3 • measured {set.ServingProfile}, " +
+                                  $"CID {set.CellId}"
+                                : $"Stage 3/3 • {set.ServingProfile}, CID " +
+                                  $"{set.CellId}: complete identity not confirmed"
+                        });
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        AddLoggedEvent(new MonitorEvent
+                        {
+                            Kind = "LTE DISCOVERY ERROR",
+                            Message = $"Stage 3/3 • {set.ServingProfile}, CID " +
+                                      $"{set.CellId}: {FriendlyUiError(ex)}"
+                        });
+                    }
+                }
             }
         }
         catch (OperationCanceledException)
@@ -5583,7 +5697,9 @@ internal sealed class MainForm : Form
             _settings.LastAutomaticCellLockUtc = originalLockUtc;
             _settings.Save();
             int lockReadyCandidates = 0;
-            foreach (LteBandCellObservation observation in results)
+            foreach (LteBandCellObservation observation in results
+                         .GroupBy(item => item.IdentityKey, StringComparer.Ordinal)
+                         .Select(group => group.First()))
             {
                 _logger.LogBandDiscovery(scanId, initialRouter, observation);
                 if (observation.Samples > 0 &&
@@ -5613,7 +5729,11 @@ internal sealed class MainForm : Form
             SetLteProfileMutationEnabled(true);
             _speedButton.Enabled = true;
             _bandDiscoveryStatus.Text = restored
-                ? "Automatic discovery is idle • candidates saved • previous router state restored"
+                ? lockReadyCandidates > 0
+                    ? $"Automatic discovery is idle • {lockReadyCandidates} " +
+                      "complete candidate(s) saved • previous router state restored"
+                    : "Automatic discovery is idle • no complete CID candidate " +
+                      "was saved • previous router state restored"
                 : "Automatic discovery ended • router recovery is pending";
             RefreshCellHistory(force: true);
         }
@@ -5657,19 +5777,34 @@ internal sealed class MainForm : Form
         int seconds,
         List<LteBandCellObservation> results,
         CancellationToken cancellationToken,
-        bool requireSingleBand = true)
+        bool requireSingleBand = true,
+        bool waitForCompleteIdentity = false,
+        int? maximumSeconds = null,
+        LteBandCellObservation? requiredIdentity = null,
+        bool recordHistory = false,
+        string stageLabel = "Discovery")
     {
-        DateTime deadline = DateTime.UtcNow.AddSeconds(seconds);
+        DateTime startedUtc = DateTime.UtcNow;
+        DateTime minimumDeadline = startedUtc.AddSeconds(seconds);
+        DateTime hardDeadline = startedUtc.AddSeconds(
+            Math.Max(seconds, maximumSeconds ?? seconds));
+        bool sawServingProfile = false;
+        string stableIdentityKey = "";
+        int stableIdentitySamples = 0;
         // Ignore the first snapshots after the write; they can still describe
         // the previous serving profile while the modem is re-registering.
         await Task.Delay(TimeSpan.FromSeconds(4), cancellationToken);
-        while (DateTime.UtcNow < deadline)
+        while (DateTime.UtcNow < hardDeadline)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            DateTime displayedDeadline = DateTime.UtcNow < minimumDeadline
+                ? minimumDeadline
+                : hardDeadline;
             int remaining = Math.Max(0, (int)Math.Ceiling(
-                (deadline - DateTime.UtcNow).TotalSeconds));
+                (displayedDeadline - DateTime.UtcNow).TotalSeconds));
             _bandDiscoveryStatus.Text =
-                $"Scanning B{band} • {position}/{totalBands} • {remaining}s remaining";
+                $"{stageLabel} • B{band} • {position}/{totalBands} • " +
+                $"{remaining}s remaining";
             RouterTelemetry sample = _routerMonitor.GetSnapshot();
             if (LteBandDiscovery.TryReadServingCell(
                     band,
@@ -5678,11 +5813,55 @@ internal sealed class MainForm : Form
                     requireSingleBand) &&
                 observation is not null)
             {
-                AccumulateDiscoveryObservation(results, observation);
+                sawServingProfile = true;
+                if (requiredIdentity is null ||
+                    MatchesDiscoveryIdentity(requiredIdentity, observation))
+                {
+                    AccumulateDiscoveryObservation(results, observation);
+                    if (observation.HasCompleteIdentity)
+                    {
+                        if (string.Equals(stableIdentityKey,
+                                observation.IdentityKey,
+                                StringComparison.Ordinal))
+                            stableIdentitySamples++;
+                        else
+                        {
+                            stableIdentityKey = observation.IdentityKey;
+                            stableIdentitySamples = 1;
+                        }
+                        if (recordHistory)
+                            _cellHistory.RecordTelemetry(sample);
+                    }
+                    else
+                    {
+                        stableIdentityKey = "";
+                        stableIdentitySamples = 0;
+                    }
+                }
+                else
+                {
+                    stableIdentityKey = "";
+                    stableIdentitySamples = 0;
+                }
             }
+            if (DateTime.UtcNow >= minimumDeadline &&
+                (!waitForCompleteIdentity || !sawServingProfile ||
+                 stableIdentitySamples >= 3))
+                break;
             await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
         }
     }
+
+    private static bool MatchesDiscoveryIdentity(
+        LteBandCellObservation expected,
+        LteBandCellObservation observed) =>
+        observed.HasCompleteIdentity &&
+        string.Equals(expected.Earfcn, observed.Earfcn,
+            StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(expected.Pci, observed.Pci,
+            StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(expected.CellId, observed.CellId,
+            StringComparison.OrdinalIgnoreCase);
 
     private static void AccumulateDiscoveryObservation(
         List<LteBandCellObservation> results,
@@ -6990,3 +7169,4 @@ internal sealed class MainForm : Form
         int RowIndex,
         string? RecommendationKey);
 }
+
