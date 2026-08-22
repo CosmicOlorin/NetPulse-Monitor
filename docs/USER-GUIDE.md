@@ -47,20 +47,30 @@ additional immediate refresh.
 
 ### Band & Cell Discovery
 
-Select **Scan bands & cells** below LTE History to test the verified bands
-supported by the detected router profile one at a time. The MR600(EU) V5 plan is
-B1/B3/B5/B7/B8/B20/B28/B38/B40/B41. Each band has a 30-second observation
-window, and **Cancel discovery** stops the remaining bands safely.
+Select **Scan bands & cells** below LTE History to run the complete three-stage
+discovery flow. The MR600(EU) V5 plan is
+B1/B3/B5/B7/B8/B20/B28/B38/B40/B41:
+
+1. Each band is locked alone for at least 30 seconds. If a serving band appears
+   before its identifiers, NetPulse waits up to 75 seconds for three consecutive
+   matching EARFCN/PCI/CID readings.
+2. Each complete PCell is locked while every band actually found in Stage 1 is
+   made available. The modem-selected ordered aggregation sets are recorded.
+3. Every unique PCell + ordered set is reapplied and measured. The first band is
+   always the PCell, so B20 + B3 and B3 + B20 are different profiles.
+
+**Cancel discovery** safely stops the remaining work.
 
 The result window lists the requested band, serving profile, EARFCN, PCI, CID,
 RSRP, RSRQ, SNR and sample count. `No serving cell observed` means that the modem
-did not register and expose a serving identity in that window; it does not prove
+did not register and expose a complete serving identity in the allowed window;
+it does not prove
 that no distant signal exists. Firmware that hides an identifier leaves it blank
 rather than receiving an inferred value. The complete result is also appended to
-`Documents\NetPulse-Monitor\band-cell-discovery.csv`. Exact results with a
-valid EARFCN and PCI also appear immediately in LTE History as lock-ready
-candidates. Their measurements and rank stay empty until they are genuinely
-observed and tested.
+`Documents\NetPulse-Monitor\band-cell-discovery.csv`. Only exact results with a
+valid EARFCN, PCI and CID appear in LTE History as lock-ready candidates. Stage
+3 supplies real radio measurements; a result is never made lock-ready using an
+incomplete or inferred identity.
 
 All LTE History buttons explain their action on hover. **Delete selected
 profile...** removes only the selected identity; **Clear LTE history** remains
@@ -74,10 +84,10 @@ restoration. The router API exposes serving cells, not a complete RF neighbor
 database, so this mode does not claim to find cells that the modem never selects
 or reports.
 
-Each normal row is one observed performance profile: a band combination on a
-specific primary cell during the time period shown by its group. Night, Morning,
-Afternoon and Evening are separate collapsible groups. Band combinations and
-PCell identities remain normal rows; they no longer create group headers.
+Each normal row is one observed performance profile: an ordered band combination
+on one exact PCell CID/EARFCN/PCI identity. The grid is a single ungrouped list.
+NetPulse still selects the relevant Night, Morning, Afternoon or Evening evidence
+internally from the connection location's official time zone.
 
 A measured connection is stored immediately but remains hidden from LTE History
 until it reaches five connected minutes in that time period. This removes
@@ -86,16 +96,14 @@ An unmeasured profile explicitly added in the Cell Lock tab remains visible as a
 manual entry. Automatic refreshes preserve the visible row and do not move the
 grid back to the top while the user is reading or scrolling.
 
-The current local-time group is always listed first. The profile that the router
-is using now is highlighted in green after it has accumulated the five minutes
+The profile that the router is using now is highlighted in green after it has accumulated the five minutes
 required to appear in the history.
 
 - **Rank**: recommendation order. Rank 1 is the preferred eligible profile.
-- **Period**: local-time bucket used for the current recommendation.
 - **Band**: LTE band profile, for example B3 or B3 + B20.
 - **EARFCN**: channel number of the primary LTE carrier.
 - **PCI**: Physical Cell Identity, when known.
-- **CID**: optional Cell ID, when known.
+- **CID**: required Cell ID for a history identity and recommendation.
 - **Seen**: connected time collected in the current period.
 - **Avg ping**: mean successful ping measured while this profile was active.
 - **Cell load\***: an estimate derived from the profile's current-period download
@@ -106,20 +114,13 @@ required to appear in the history.
 - **Drop/h**: time-weighted confirmed disconnects per connected hour.
 - **Down**: time-weighted average speed-test download result.
 - **Up**: time-weighted average speed-test upload result.
-- **Confidence**: whether enough connected time and speed-test evidence exists.
+- **RF score**: 50% SINR, 35% RSRQ and 15% RSRP.
+- **Confidence**: whether enough connected time and complete radio evidence exists.
 
-Click any column header to sort the rows inside each time-period group; click it
-again to reverse the order. Click a time-period group row to collapse or expand
-it. Sorting changes only the display. Rank is calculated from a normalized score:
-50% download, 40% confirmed disconnections per connected hour and 10% upload.
-Confidence controls whether a profile has enough evidence to rank. Average ping
-and estimated load are explanatory measurements and do not add a hidden score.
-
-Download and upload receive `current result / fastest eligible result × 100`
-points inside the same time period. Reliability receives
-`100 / (1 + confirmed drops per connected hour)` points. This gives zero-drop
-profiles full reliability credit without allowing reliability alone to override
-the combined 60% download/upload contribution.
+Click any column header to sort the single ungrouped list; click it again to
+reverse the order. Sorting changes only the display. Rank uses 50% SINR, 35% RSRQ
+and 15% RSRP. Download, upload, confirmed disconnects, average ping and estimated
+load remain explanatory measurements and do not add a hidden score.
 
 ## Time periods
 
@@ -165,7 +166,7 @@ The **Cell Lock** tab accepts:
 - one or more bands, such as `B3` or `B3 + B20`;
 - primary EARFCN;
 - PCI;
-- optional decimal or hexadecimal CID, such as the synthetic example `ABCDE`
+- required decimal or hexadecimal CID, such as the synthetic example `ABCDE`
   or `0xABCDE`.
 
 Its first field lists previously observed sets that have at least five connected
@@ -186,7 +187,7 @@ Settings. Every profile change uses normal rollback validation, the comparable
 speed-test sample is recorded, cancellation is available, and the exact router
 state from before the experiment is restored in a `finally` recovery path. Only
 after restoration does NetPulse offer to apply the measured winner. The ranking
-remains 50% download, 40% confirmed disconnections and 10% upload.
+remains 50% SINR, 35% RSRQ and 15% RSRP.
 
 ## SMS
 
@@ -254,9 +255,20 @@ Windows tray notifications; unread-SMS notifications remain one notification per
 message identity.
 
 Update checks query only the repository's latest public GitHub release metadata.
-They can run manually or, when enabled, at most once per day. NetPulse never
-downloads or installs an update automatically. The Dashboard Updates card shows
-the installed application version and opens a release only after a user action.
+They can run manually or, when enabled, at most once per day. After confirmation,
+NetPulse downloads, verifies and installs the Windows executable without opening
+a browser. A newer executable placed beside the application as
+`NetPulse Monitor.update.exe` is used before GitHub. The stable
+`NetPulse Monitor.exe` path and Windows identity preserve pins, shortcuts,
+startup configuration and notification identity across releases.
+
+## Connected devices
+
+The **Devices** tab reads the router's current active LAN-client table and shows
+the device name, IP address, MAC address and Wi-Fi/Ethernet type when the
+firmware exposes them. The Android Companion provides the same view through the
+encrypted paired-PC protocol. This list is live UI data: NetPulse does not save
+it to settings, CSV logs, LTE history or release artifacts.
 
 ## Country and official timestamps
 
@@ -327,3 +339,4 @@ Settings controls use fixed-height, vertically centered rows so labels and
 inputs remain aligned on tall and high-DPI screens. Diagnostics uses five
 flexible result rows plus a dedicated button row, preventing overlap at the
 minimum window size.
+
