@@ -195,7 +195,7 @@ public partial class MainPage : ContentPage
         return bits >= 1_000_000 ? $"{bits / 1_000_000:0.##} Mbps" : $"{bits / 1_000:0.#} Kbps";
     }
 
-    private async void OnLiveNotificationToggled(object sender, ToggledEventArgs e)
+    private void OnLiveNotificationToggled(object sender, ToggledEventArgs e)
     {
         Preferences.Default.Set(LiveNotificationPreference, e.Value);
 #if ANDROID
@@ -207,7 +207,12 @@ public partial class MainPage : ContentPage
             return;
         }
         if (Android.OS.Build.VERSION.SdkInt >= Android.OS.BuildVersionCodes.Tiramisu)
-            await Permissions.RequestAsync<Permissions.PostNotifications>();
+        {
+            Android.App.Activity? activity = Microsoft.Maui.ApplicationModel.Platform.CurrentActivity;
+            if (activity is not null &&
+                activity.CheckSelfPermission(Android.Manifest.Permission.PostNotifications) != Android.Content.PM.Permission.Granted)
+                activity.RequestPermissions([Android.Manifest.Permission.PostNotifications], 1042);
+        }
 #endif
     }
 
