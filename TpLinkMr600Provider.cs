@@ -1091,6 +1091,7 @@ internal sealed class TpLinkMr600Provider :
         CgiObject data = response.GetFirst(1);
         CgiObject network = response.GetFirst(2);
         CgiObject profile = response.GetFirst(3);
+        CgiObject cell = response.GetFirstOrEmpty(4);
         CgiObject device = response.GetFirstOrEmpty(5);
 
         int? signalBars = ParseInt(link.Get("signalStrength"));
@@ -1102,6 +1103,27 @@ internal sealed class TpLinkMr600Provider :
         string primaryBand = FormatPrimaryBand(
             network.Get("rfInfoPCellBand"),
             band);
+        string liveEarfcn = FirstRadioValue(
+            network.Get("rfInfoPCellChannel"),
+            network.Get("rfInfoChannel"),
+            network.Get("rfInfoEARFCN"));
+        string networkPci = FirstRadioValue(network.Get("rfInfoPCI"));
+        string networkCellId = FirstRadioValue(network.Get("rfInfoCellID"));
+        string cellEarfcn = FirstRadioValue(cell.Get("rfInfoEARFCN"));
+        bool cellStatusMatchesServingChannel =
+            liveEarfcn != "-" && cellEarfcn != "-" &&
+            string.Equals(liveEarfcn, cellEarfcn,
+                StringComparison.OrdinalIgnoreCase);
+        string servingPci = networkPci != "-"
+            ? networkPci
+            : cellStatusMatchesServingChannel
+                ? FirstRadioValue(cell.Get("rfInfoPCI"))
+                : "-";
+        string servingCellId = networkCellId != "-"
+            ? networkCellId
+            : cellStatusMatchesServingChannel
+                ? FirstRadioValue(cell.Get("rfInfoCellID"))
+                : "-";
 
         return new RouterTelemetry
         {
@@ -1122,14 +1144,14 @@ internal sealed class TpLinkMr600Provider :
                 ? rawSnr / 10D
                 : null,
             RssiDbm = ParseDouble(network.Get("rfInfoRssi")),
-            // LTE_CELL_LOCK contains the configured lock target, not necessarily
-            // the currently serving PCell. Never use it as live telemetry.
-            Pci = FirstRadioValue(network.Get("rfInfoPCI")),
-            CellId = FirstRadioValue(network.Get("rfInfoCellID")),
-            Earfcn = FirstRadioValue(
-                network.Get("rfInfoPCellChannel"),
-                network.Get("rfInfoChannel"),
-                network.Get("rfInfoEARFCN")),
+            // This MR600 firmware omits PCI/CID from LTE_NET_STATUS but mirrors
+            // the current PCell identity through LTE_CELL_LOCK, even while Cell
+            // Lock is disabled. Accept that fallback only after its EARFCN
+            // matches the live serving channel, so a stale previous target is
+            // never attached to a newly selected band.
+            Pci = servingPci,
+            CellId = servingCellId,
+            Earfcn = liveEarfcn,
             UnreadSmsCount = ParseInt(network.Get("smsUnreadCount")) is int unread
                 ? Math.Clamp(unread, 0, 9999)
                 : null,
@@ -1734,3 +1756,4 @@ internal sealed class TpLinkMr600Provider :
             Values.TryGetValue(name, out string? value) ? value : null;
     }
 }
+
