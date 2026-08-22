@@ -227,6 +227,19 @@ app.MapPost("/cgi_gdpr", async (HttpRequest request) =>
             "[1,0,0,0,0,0]0\r\n" +
             "WANAccessType=LTE\r\n";
     }
+    else if (plainRequest.Contains("LAN_HOST_ENTRY", StringComparison.Ordinal))
+    {
+        plainResponse =
+            "[1,0,0,0,0,0]0\r\nIPAddress=192.168.1.20\r\n" +
+            "MACAddress=aa-bb-cc-dd-ee-01\r\nhostName=Living room TV\r\n" +
+            "X_TP_ConnType=wireless\r\nactive=1\r\n" +
+            "[2,0,0,0,0,0]0\r\nIPAddress=192.168.1.21\r\n" +
+            "MACAddress=AABBCCDDEE02\r\nhostName=\r\n" +
+            "X_TP_ConnType=Ethernet\r\nactive=1\r\n" +
+            "[3,0,0,0,0,0]0\r\nIPAddress=192.168.1.99\r\n" +
+            "MACAddress=AABBCCDDEE99\r\nhostName=Offline client\r\n" +
+            "X_TP_ConnType=wireless\r\nactive=0\r\n";
+    }
     else if (plainRequest.Contains("bandSelectSwitch", StringComparison.Ordinal) &&
              plainRequest.Contains("rfInfoCellIDLock", StringComparison.Ordinal))
     {
@@ -250,6 +263,7 @@ app.MapPost("/cgi_gdpr", async (HttpRequest request) =>
             "[1,1,0,0,0,0]2\r\n" +
             "regStat=1\r\nrfInfoBand=122\r\nrfInfoRsrq=-9\r\n" +
             "rfInfoRsrp=-97\r\nrfInfoSnr=123\r\nrfInfoRssi=-68\r\n" +
+            "rfInfoChannel=1300\r\n" +
             (exposeLiveIdentity
                 ? "rfInfoCellID=123456789\r\nrfInfoPCellBand=3\r\n" +
                   "rfInfoPCellChannel=1300\r\nrfInfoPCI=321\r\n"
@@ -259,7 +273,9 @@ app.MapPost("/cgi_gdpr", async (HttpRequest request) =>
             "[1,1,0,0,0,0]3\r\n" +
             "ispName=Test Carrier\r\nspn=Test\r\n" +
             "[0,0,0,0,0,0]4\r\n" +
-            "rfInfoCellID=A1B2C\r\nrfInfoEARFCN=500\r\nrfInfoPCI=255\r\n" +
+            (statusRequests == 3
+                ? "rfInfoCellID=A1B2C\r\nrfInfoEARFCN=1300\r\nrfInfoPCI=255\r\n"
+                : "rfInfoCellID=A1B2C\r\nrfInfoEARFCN=500\r\nrfInfoPCI=255\r\n") +
             "[0,0,0,0,0,0]5\r\n" +
             $"modelName={mockModel}\r\nhardwareVersion={mockModel} v5\r\n" +
             "softwareVersion=1.5.0 mock\r\n";
@@ -297,10 +313,28 @@ try
         "The serving-cell status was not preferred over empty Cell Lock values.");
     Require(telemetry.PrimaryBand == "B3",
         "The serving PCell band was not parsed independently of carrier aggregation.");
+    RouterTelemetry fallbackTelemetry = await provider.ReadAsync(timeout.Token);
+    Require(fallbackTelemetry.Earfcn == "1300" &&
+            fallbackTelemetry.Pci == "255" &&
+            fallbackTelemetry.CellId == "A1B2C",
+        "A matching LTE_CELL_LOCK status identity must fill CID/PCI when this " +
+        "MR600 firmware omits them from LTE_NET_STATUS.");
     Require(telemetry.UnreadSmsCount == 2,
         "The unread SMS count was not parsed from LTE status.");
     Require(telemetry.TotalBytes == 2147483648L, "64-bit data usage was not parsed.");
     Require(statusRequests >= 2, "Expected status reads were not sent.");
+
+    IReadOnlyList<RouterConnectedDevice> devices =
+        await provider.ReadConnectedDevicesAsync(timeout.Token);
+    Require(devices.Count == 2,
+        "Only active TP-Link LAN clients should be returned.");
+    Require(devices[0].Name == "Living room TV" &&
+            devices[0].MacAddress == "AA:BB:CC:DD:EE:01" &&
+            devices[0].ConnectionType == "Wi-Fi",
+        "Connected-device identity and connection type were not normalized.");
+    Require(devices[1].Name == "Unknown device" &&
+            devices[1].ConnectionType == "Ethernet",
+        "Unnamed Ethernet clients should remain visible with a safe label.");
 
     RouterMobileNetworkModeState legacyMode =
         await provider.ReadMobileNetworkModeAsync(timeout.Token);
@@ -316,10 +350,10 @@ try
         "MR600 4G-only mode was not written and confirmed.");
 
     RouterTelemetry identityHidden = await provider.ReadAsync(timeout.Token);
-    Require(identityHidden.Earfcn == "-" && identityHidden.Pci == "-" &&
+    Require(identityHidden.Earfcn == "1300" && identityHidden.Pci == "-" &&
             identityHidden.CellId == "-",
         "Configured LTE Cell Lock values must never be reported as the live " +
-        "serving PCell identity when live fields are absent.");
+        "serving PCell identity when their EARFCN does not match the live channel.");
 
     IReadOnlyList<RouterSmsMessage> timeline =
         await provider.ReadSmsTimelineAsync(timeout.Token);
@@ -1101,8 +1135,8 @@ static void TestCellHistoryRanking()
                     repairedAggregation.CellId == "BBB" &&
                     Math.Abs(repairedAggregation.ConnectedTime.TotalSeconds - 90) < 0.1,
                 "CID-qualified evidence must remain separate from an ambiguous legacy row.");
-            Require(rows.Any(item => item.Band == "B3 + B28" && item.CellId is null),
-                "Ambiguous legacy evidence must not be assigned to a known CID.");
+            Require(!rows.Any(item => string.IsNullOrWhiteSpace(item.CellId)),
+                "Ambiguous legacy evidence without CID must be removed, never assigned or displayed.");
             Require(rows.Any(item => item.Band == "B1" && item.Earfcn == "500"),
                 "EARFCN 500 is valid for LTE Band 1 and must not be discarded.");
         }
@@ -1123,7 +1157,7 @@ static void TestCellHistoryRanking()
         DateTime eveningUtc = eveningLocal.ToUniversalTime();
 
         RecordCell(timedHistory, morningUtc, "B3", "1300", "100", "11",
-            3600, bytesPerSecond: 2000);
+            3600, bytesPerSecond: 2000, sinrDb: 18, rsrqDb: -7, rsrpDbm: -83);
         timedHistory.RecordSpeedTest(
             Telemetry(morningUtc.AddSeconds(3600), "B3", "1300", "100", "11"),
             Speed(200, 20));
@@ -1133,7 +1167,7 @@ static void TestCellHistoryRanking()
         timedHistory.RecordPingSample(40, morningLocal.AddMinutes(10));
         timedHistory.RecordPingSample(60, morningLocal.AddMinutes(20));
         RecordCell(timedHistory, morningUtc, "B7", "2850", "200", "22",
-            3600, bytesPerSecond: 1000);
+            3600, bytesPerSecond: 1000, sinrDb: 2, rsrqDb: -16, rsrpDbm: -110);
         timedHistory.RecordSpeedTest(
             Telemetry(morningUtc.AddSeconds(3600), "B7", "2850", "200", "22"),
             Speed(50, 10));
@@ -1142,7 +1176,7 @@ static void TestCellHistoryRanking()
             Speed(50, 10));
 
         RecordCell(timedHistory, eveningUtc, "B3", "1300", "100", "11",
-            3600, bytesPerSecond: 1000);
+            3600, bytesPerSecond: 1000, sinrDb: 2, rsrqDb: -16, rsrpDbm: -110);
         timedHistory.RecordSpeedTest(
             Telemetry(eveningUtc.AddSeconds(3600), "B3", "1300", "100", "11"),
             Speed(50, 10));
@@ -1150,7 +1184,7 @@ static void TestCellHistoryRanking()
             Telemetry(eveningUtc.AddSeconds(3601), "B3", "1300", "100", "11"),
             Speed(50, 10));
         RecordCell(timedHistory, eveningUtc, "B7", "2850", "200", "22",
-            3600, bytesPerSecond: 2000);
+            3600, bytesPerSecond: 2000, sinrDb: 18, rsrqDb: -7, rsrpDbm: -83);
         timedHistory.RecordSpeedTest(
             Telemetry(eveningUtc.AddSeconds(3600), "B7", "2850", "200", "22"),
             Speed(200, 20));
@@ -1220,7 +1254,10 @@ static void RecordCell(
     string pci,
     string cellId,
     int seconds,
-    long bytesPerSecond = 0)
+    long bytesPerSecond = 0,
+    double? sinrDb = null,
+    double? rsrqDb = null,
+    double? rsrpDbm = null)
 {
     for (int second = 0; second <= seconds; second++)
         history.RecordTelemetry(
@@ -1230,7 +1267,10 @@ static void RecordCell(
                 earfcn,
                 pci,
                 cellId,
-                bytesPerSecond > 0 ? second * bytesPerSecond : null));
+                bytesPerSecond > 0 ? second * bytesPerSecond : null,
+                sinrDb,
+                rsrqDb,
+                rsrpDbm));
 }
 
 static RouterTelemetry Telemetry(
@@ -1239,7 +1279,10 @@ static RouterTelemetry Telemetry(
     string earfcn,
     string pci,
     string cellId,
-    long? totalBytes = null) => new()
+    long? totalBytes = null,
+    double? sinrDb = null,
+    double? rsrqDb = null,
+    double? rsrpDbm = null) => new()
     {
         Timestamp = timestamp,
         IsConnected = true,
@@ -1248,7 +1291,10 @@ static RouterTelemetry Telemetry(
         Earfcn = earfcn,
         Pci = pci,
         CellId = cellId,
-        TotalBytes = totalBytes
+        TotalBytes = totalBytes,
+        SnrDb = sinrDb,
+        RsrqDb = rsrqDb,
+        RsrpDbm = rsrpDbm
     };
 
 static SpeedTestResult Speed(double download, double upload) => new()
@@ -1259,59 +1305,27 @@ static SpeedTestResult Speed(double download, double upload) => new()
 
 static void TestAutoLockPolicy()
 {
-    LteCellRecommendation bestZeroDrop = Recommendation(0, 34.57, 5.18);
-    LteCellRecommendation slowZeroDrop = Recommendation(0, 2.59, 3.83);
-    LteCellRecommendation fastWithOneDrop = Recommendation(0.89, 19.78, 5.42);
-    LteCellRecommendation[] observedExample =
-        [bestZeroDrop, slowZeroDrop, fastWithOneDrop];
-    LteRecommendationScoring.AssignScores(observedExample);
-    Require(bestZeroDrop.WeightedScore > fastWithOneDrop.WeightedScore &&
-            fastWithOneDrop.WeightedScore > slowZeroDrop.WeightedScore,
-        "The requested 50/40/10 weights should place the faster one-drop " +
-        "profile above the very slow zero-drop profile.");
-
-    LteCellRecommendation reliableSlow = Recommendation(0.10, 50, 10);
-    LteCellRecommendation lessReliableFast = Recommendation(0.20, 200, 50);
-    LteCellRecommendation[] speedWeighted = [reliableSlow, lessReliableFast];
-    Require(!LteAutoLockPolicy.IsMeaningfullyBetter(
-            reliableSlow,
-            lessReliableFast,
-            speedWeighted),
-        "A 40% reliability advantage must not automatically override the " +
-        "combined 60% speed score.");
-    Require(LteAutoLockPolicy.IsMeaningfullyBetter(
-            lessReliableFast,
-            reliableSlow,
-            speedWeighted),
-        "The 50/40/10 score should allow a materially faster profile to win.");
-
-    LteCellRecommendation fasterDown = Recommendation(0, 140, 10);
-    LteCellRecommendation fasterUp = Recommendation(0, 100, 50);
-    LteCellRecommendation[] downloadWeighted = [fasterDown, fasterUp];
-    Require(LteAutoLockPolicy.IsMeaningfullyBetter(
-            fasterDown,
-            fasterUp,
-            downloadWeighted),
-        "The 50% download share should outweigh the 10% upload share.");
-
-    LteCellRecommendation slowerDown = Recommendation(0, 90, 100);
-    LteCellRecommendation fasterDownLowUpload = Recommendation(0, 100, 10);
-    LteCellRecommendation[] uploadCannotOverride =
-        [slowerDown, fasterDownLowUpload];
-    Require(!LteAutoLockPolicy.IsMeaningfullyBetter(
-            slowerDown,
-            fasterDownLowUpload,
-            uploadCannotOverride),
-        "The 10% upload share must not override the 50% download share.");
-
-    LteCellRecommendation upload40 = Recommendation(0, 100, 40);
-    LteCellRecommendation upload20 = Recommendation(0, 100, 20);
-    LteCellRecommendation[] uploadTieBreak = [upload40, upload20];
-    Require(LteAutoLockPolicy.IsMeaningfullyBetter(
-            upload40,
-            upload20,
-            uploadTieBreak),
-        "Upload should decide when disconnections and download are equal.");
+    LteCellRecommendation excellent = RadioRecommendation(20, -6, -80);
+    LteCellRecommendation good = RadioRecommendation(10, -10, -92);
+    LteCellRecommendation poor = RadioRecommendation(-3, -18, -112);
+    LteCellRecommendation[] candidates = [excellent, good, poor];
+    LteRecommendationScoring.AssignScores(candidates);
+    Require(excellent.WeightedScore > good.WeightedScore &&
+            good.WeightedScore > poor.WeightedScore,
+        "LTE ranking must use 50% SINR, 35% RSRQ and 15% RSRP.");
+    Require(LteAutoLockPolicy.IsMeaningfullyBetter(excellent, good, candidates),
+        "A materially better radio-quality profile should be preferred.");
+    Require(LteRecommendationScoring.ScoreSinr(16) >= 90 &&
+            LteRecommendationScoring.ScoreSinr(15) >= 90 &&
+            LteRecommendationScoring.ScoreRsrq(-7) >= 90 &&
+            LteRecommendationScoring.ScoreRsrp(-80) >= 95 &&
+            LteRecommendationScoring.ScoreRsrp(-85) >= 95,
+        "Excellent radio thresholds must map to their requested score ranges.");
+    LteCellRecommendation legacyOnly = Recommendation(
+        0, 100, 100, TimeSpan.FromHours(1));
+    LteRecommendationScoring.AssignScores([legacyOnly]);
+    Require(legacyOnly.WeightedScore == 0,
+        "Download, upload and disconnect data must not replace missing radio evidence.");
 
     DateTime now = DateTime.UtcNow;
     var settings = new AppSettings
@@ -1329,6 +1343,17 @@ static void TestAutoLockPolicy()
     settings.AutomaticCellLockChangesToday = 6;
     Require(!LteAutoLockPolicy.CanAttempt(settings, now),
         "The daily change limit should block further automatic writes.");
+
+    static LteCellRecommendation RadioRecommendation(
+        double sinr, double rsrq, double rsrp) => new()
+        {
+            Key = Guid.NewGuid().ToString("N"), Band = "B3",
+            PrimaryBand = "B3", Earfcn = "1300", Pci = "77",
+            CellId = "ABCDE", TimePeriod = "Morning 06–12",
+            UsageBasis = "time", Confidence = "High", IsEligible = true,
+            AverageSinrDb = sinr, AverageRsrqDb = rsrq,
+            AverageRsrpDbm = rsrp
+        };
 }
 
 static void TestAutomaticSpeedTests()
@@ -1586,12 +1611,12 @@ static void TestExperienceServices()
             SmsConversationBuilder.NormalizeAddress("6991234567", "GR"),
         "Greek national and international SMS numbers must share one conversation.");
 
-    LteCellRecommendation reliable = Recommendation(0, 40, 5, TimeSpan.FromMinutes(20));
-    LteCellRecommendation fastButUnstable = Recommendation(12, 50, 8, TimeSpan.FromMinutes(20));
+    LteCellRecommendation reliable = RadioProfile(18, -7, -83);
+    LteCellRecommendation fastButUnstable = RadioProfile(2, -16, -110);
     IReadOnlyList<CellExperimentResult> ranked = CellExperimentEvaluator.Rank(
         [reliable, fastButUnstable]);
     Require(ranked.Count == 2 && ranked[0].Recommendation == reliable,
-        "Controlled experiments must respect the 50/40/10 download/drop/upload policy.");
+        "Controlled experiments must respect the 50/35/15 SINR/RSRQ/RSRP policy.");
 
     Require(ReleaseVersionComparer.IsNewer("v2.0.0", "1.0.7") &&
             !ReleaseVersionComparer.IsNewer("v1.0.7", "1.0.7"),
@@ -1648,8 +1673,28 @@ static void TestBandDiscovery()
         out LteBandCellObservation? cell);
     Require(read && cell is not null && cell.RequestedBand == 3 &&
             cell.Earfcn == "1700" && cell.Pci == "77" &&
-            cell.CellId == "ABCDE" && cell.Samples == 1,
+            cell.CellId == "ABCDE" && cell.Samples == 1 &&
+            cell.HasCompleteIdentity,
         "Discovery must retain full serving-cell identifiers.");
+
+    bool incompleteRead = LteBandDiscovery.TryReadServingCell(
+        3,
+        new RouterTelemetry
+        {
+            IsConnected = true,
+            Band = "B3",
+            PrimaryBand = "B3",
+            Earfcn = "1700",
+            Pci = "-",
+            CellId = "-"
+        },
+        out LteBandCellObservation? incompleteCell);
+    Require(incompleteRead && incompleteCell is not null &&
+            !incompleteCell.HasCompleteIdentity &&
+            incompleteCell.Status.Contains("waiting for complete",
+                StringComparison.OrdinalIgnoreCase),
+        "A serving band without PCI/CID must remain pending, not count as a " +
+        "completed discovery identity.");
 
     bool staleCombinationAccepted = LteBandDiscovery.TryReadServingCell(
         3,
@@ -1690,3 +1735,23 @@ static LteCellRecommendation Recommendation(
         UserAdded = userAdded,
         DiscoveryCandidate = discoveryCandidate
     };
+
+static LteCellRecommendation RadioProfile(double sinr, double rsrq, double rsrp) =>
+    new()
+    {
+        Key = Guid.NewGuid().ToString("N"),
+        Band = "B3",
+        PrimaryBand = "B3",
+        Earfcn = "1300",
+        Pci = "77",
+        CellId = "ABCDE",
+        PeriodConnectedTime = TimeSpan.FromMinutes(20),
+        TimePeriod = "Morning 06–12",
+        UsageBasis = "time",
+        Confidence = "High",
+        IsEligible = true,
+        AverageSinrDb = sinr,
+        AverageRsrqDb = rsrq,
+        AverageRsrpDbm = rsrp
+    };
+
