@@ -314,7 +314,8 @@ public sealed class CompanionClient : IDisposable
 
     public async Task<AndroidAppRelease> ReadAndroidAppReleaseAsync(CancellationToken cancellationToken = default)
     {
-        using HttpResponseMessage response = await _http.GetAsync("/v1/app/android", cancellationToken);
+        using HttpRequestMessage request = CreateSignedRequest(HttpMethod.Get, "/v1/app/android");
+        using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<AndroidAppRelease>(cancellationToken: cancellationToken) ??
                throw new InvalidDataException("The desktop did not return Android update information.");
@@ -322,32 +323,110 @@ public sealed class CompanionClient : IDisposable
 
     public Uri GetAndroidDownloadUri(string downloadPath) => new(_http.BaseAddress!, downloadPath);
 
-    public async Task DownloadAndroidUpdateAsync(AndroidAppRelease release, string destinationPath, IProgress<double>? progress = null, CancellationToken token = default)
+    public async Task<string> DownloadAndroidUpdateAsync(AndroidAppRelease release, string destinationPath, IProgress<double>? progress = null, CancellationToken token = default)
     {
-        using HttpResponseMessage response = await _http.GetAsync(release.DownloadPath, HttpCompletionOption.ResponseHeadersRead, token);
-        response.EnsureSuccessStatusCode();
-        long total = response.Content.Headers.ContentLength ?? release.Size;
-        await using Stream source = await response.Content.ReadAsStreamAsync(token);
-        await using FileStream destination = new(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true);
-        byte[] buffer = new byte[81920];
-        long received = 0;
-        int read;
-        while ((read = await source.ReadAsync(buffer, token)) > 0)
+        string destinationDirectory = Path.GetDirectoryName(destinationPath) ??
+            throw new ArgumentException("The Android update destination must include a directory.", nameof(destinationPath));
+        Directory.CreateDirectory(destinationDirectory);
+        string stagedPath = Path.Combine(
+            destinationDirectory,
+            $".{Path.GetFileName(destinationPath)}.{Guid.NewGuid():N}.download");
+
+        try
         {
-            await destination.WriteAsync(buffer.AsMemory(0, read), token);
-            received += read;
-            if (total > 0) progress?.Report(Math.Clamp(received / (double)total, 0, 1));
+            using HttpRequestMessage request = CreateSignedRequest(HttpMethod.Get, release.DownloadPath);
+            using HttpResponseMessage response = await _http.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                token);
+            response.EnsureSuccessStatusCode();
+            long total = response.Content.Headers.ContentLength ?? release.Size;
+            await using Stream source = await response.Content.ReadAsStreamAsync(token);
+
+            await using (FileStream destination = new(
+                stagedPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                81920,
+                true))
+            {
+                byte[] buffer = new byte[81920];
+                long received = 0;
+                int read;
+                while ((read = await source.ReadAsync(buffer, token)) > 0)
+                {
+                    await destination.WriteAsync(buffer.AsMemory(0, read), token);
+                    received += read;
+                    if (total > 0)
+                        progress?.Report(Math.Clamp(received / (double)total, 0, 1));
+                }
+                await destination.FlushAsync(token);
+            }
+
+            string hash;
+            await using (FileStream downloaded = new(
+                stagedPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                81920,
+                true))
+            {
+                hash = Convert.ToHexString(await SHA256.HashDataAsync(downloaded, token));
+            }
+
+            if (!hash.Equals(release.Sha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("The downloaded update failed its SHA-256 integrity check.");
+
+            string completedPath = destinationPath;
+            try
+            {
+                File.Move(stagedPath, completedPath, true);
+            }
+            catch (Exception ex) when (
+                (ex is IOException || ex is UnauthorizedAccessException) &&
+                File.Exists(completedPath))
+            {
+                completedPath = Path.Combine(
+                    destinationDirectory,
+                    $"{Path.GetFileNameWithoutExtension(destinationPath)}-{Guid.NewGuid():N}{Path.GetExtension(destinationPath)}");
+                File.Move(stagedPath, completedPath);
+            }
+
+            progress?.Report(1);
+            return completedPath;
         }
-        await destination.FlushAsync(token);
-        string hash;
-        await using (FileStream downloaded = File.OpenRead(destinationPath))
-            hash = Convert.ToHexString(await SHA256.HashDataAsync(downloaded, token));
-        if (!hash.Equals(release.Sha256, StringComparison.OrdinalIgnoreCase))
+        finally
         {
-            File.Delete(destinationPath);
-            throw new InvalidDataException("The downloaded update failed its SHA-256 integrity check.");
+            try
+            {
+                if (File.Exists(stagedPath)) File.Delete(stagedPath);
+            }
+            catch (IOException)
+            {
+                // Android may briefly retain a handle while cancellation unwinds.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // A later cache cleanup can remove an inaccessible staging file.
+            }
         }
-        progress?.Report(1);
+    }
+
+    private HttpRequestMessage CreateSignedRequest(HttpMethod method, string path)
+    {
+        string timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+        string nonce = Base64Url(RandomNumberGenerator.GetBytes(18));
+        string payload = $"{method.Method}\n{path}\n{timestamp}\n{nonce}";
+        string signature = Base64Url(HMACSHA256.HashData(
+            _key,
+            Encoding.UTF8.GetBytes(payload)));
+        var request = new HttpRequestMessage(method, path);
+        request.Headers.Add("X-NetPulse-Time", timestamp);
+        request.Headers.Add("X-NetPulse-Nonce", nonce);
+        request.Headers.Add("X-NetPulse-Signature", signature);
+        return request;
     }
 
     private static string Base64Url(byte[] value) => Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');
