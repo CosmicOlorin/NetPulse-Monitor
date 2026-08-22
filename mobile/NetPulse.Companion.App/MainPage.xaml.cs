@@ -10,8 +10,14 @@ public partial class MainPage : ContentPage
     private CancellationTokenSource? _pollCancellation;
     private bool _loaded;
     private MobileSmsMessage? _selectedSms;
+    private MobileSmsListItem? _selectedSmsListItem;
+    private IReadOnlyList<MobileSmsMessage> _smsMessages = [];
+    private bool _showSmsDrafts;
     private MobileLteProfile? _selectedLte;
     private int? _lastUnreadCount;
+    private string _activeSection = "Status";
+    private DateTime _nextDevicesRefreshUtc = DateTime.MinValue;
+    private bool _devicesBusy;
     public MainPage()
     {
         InitializeComponent();
@@ -113,6 +119,12 @@ public partial class MainPage : ContentPage
                     MainThread.BeginInvokeOnMainThread(() => { LiveErrorLabel.IsVisible = false; ConnectionBadge.Text = "CONNECTED"; UpdateDashboard(snapshot); });
                     if (snapshot.UnreadSmsCount.GetValueOrDefault() > _lastUnreadCount.GetValueOrDefault()) _ = NotifyNewSmsAsync();
                     _lastUnreadCount = snapshot.UnreadSmsCount;
+                    if (_activeSection == "Devices" &&
+                        DateTime.UtcNow >= _nextDevicesRefreshUtc)
+                    {
+                        _nextDevicesRefreshUtc = DateTime.UtcNow.AddSeconds(10);
+                        _ = MainThread.InvokeOnMainThreadAsync(RefreshDevicesAsync);
+                    }
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
                 catch (Exception ex) { MainThread.BeginInvokeOnMainThread(() => { ConnectionBadge.Text = "RETRYING"; LiveErrorLabel.Text = FriendlyError(ex); LiveErrorLabel.IsVisible = true; }); }
@@ -234,40 +246,209 @@ public partial class MainPage : ContentPage
         StatusContent.IsVisible = section == StatusContent;
         SmsContent.IsVisible = section == SmsContent;
         LteContent.IsVisible = section == LteContent;
+        DevicesContent.IsVisible = section == DevicesContent;
+        _activeSection = section == DevicesContent ? "Devices" :
+            section == SmsContent ? "SMS" :
+            section == LteContent ? "LTE" : "Status";
     }
 
     private void OnStatusTabClicked(object sender, EventArgs e) => ShowSection(StatusContent);
     private async void OnSmsTabClicked(object sender, EventArgs e) { ShowSection(SmsContent); await RefreshSmsAsync(); }
     private async void OnLteTabClicked(object sender, EventArgs e) { ShowSection(LteContent); await RefreshLteAsync(); }
+    private async void OnDevicesTabClicked(object sender, EventArgs e) { ShowSection(DevicesContent); await RefreshDevicesAsync(); }
     private async void OnRefreshSmsClicked(object sender, EventArgs e) => await RefreshSmsAsync();
+    private void OnSmsConversationsClicked(object sender, EventArgs e)
+    {
+        _showSmsDrafts = false;
+        PopulateSmsViews();
+    }
+    private void OnSmsDraftsClicked(object sender, EventArgs e)
+    {
+        _showSmsDrafts = true;
+        PopulateSmsViews();
+    }
+    private void OnNewSmsClicked(object sender, EventArgs e)
+    {
+        _selectedSms = null;
+        _selectedSmsListItem = null;
+        SmsList.SelectedItem = null;
+        SmsThreadList.SelectedItem = null;
+        SmsThreadList.ItemsSource = null;
+        SmsThreadHeading.Text = "New SMS";
+        SmsPhoneEntry.Text = "";
+        SmsBodyEntry.Text = "";
+        SendSmsButton.Text = "Send SMS";
+        UpdateSmsActionButtons();
+        SmsPhoneEntry.Focus();
+    }
     private async void OnRefreshLteClicked(object sender, EventArgs e) => await RefreshLteAsync();
+    private async void OnRefreshDevicesClicked(object sender, EventArgs e) => await RefreshDevicesAsync();
 
-    private async Task RefreshSmsAsync()
+    private async Task RefreshDevicesAsync()
+    {
+        if (_client is null || _devicesBusy) return;
+        _devicesBusy = true;
+        try
+        {
+            DevicesStatusLabel.Text = "Reading the router…";
+            List<MobileConnectedDevice> devices = await _client.ReadConnectedDevicesAsync();
+            DevicesList.ItemsSource = devices;
+            DevicesStatusLabel.Text = devices.Count == 0
+                ? "No active client devices were reported by the router."
+                : $"{devices.Count} active device{(devices.Count == 1 ? "" : "s")} · live data · not stored";
+        }
+        catch (Exception ex) { DevicesStatusLabel.Text = FriendlyError(ex); }
+        finally
+        {
+            _nextDevicesRefreshUtc = DateTime.UtcNow.AddSeconds(10);
+            _devicesBusy = false;
+        }
+    }
+
+    private async Task RefreshSmsAsync(
+        string? preferredAddress = null,
+        string? preferredIdentity = null)
     {
         if (_client is null) return;
-        try { SmsStatusLabel.Text = "Loading…"; SmsList.ItemsSource = (await _client.ReadSmsAsync()).OrderByDescending(x => x.Timestamp).ToList(); SmsStatusLabel.Text = ""; }
+        try
+        {
+            SmsStatusLabel.Text = "Loading…";
+            preferredAddress ??= _selectedSmsListItem?.Address;
+            preferredIdentity ??= _selectedSms?.Identity;
+            _smsMessages = (await _client.ReadSmsAsync())
+                .OrderByDescending(message => message.Timestamp ?? DateTime.MinValue)
+                .ToArray();
+            PopulateSmsViews(preferredAddress, preferredIdentity);
+        }
         catch (Exception ex) { SmsStatusLabel.Text = FriendlyError(ex); }
     }
 
-    private void OnSmsSelected(object sender, SelectionChangedEventArgs e)
+    private void PopulateSmsViews(
+        string? preferredAddress = null,
+        string? preferredIdentity = null)
     {
-        _selectedSms = e.CurrentSelection.FirstOrDefault() as MobileSmsMessage;
-        if (_selectedSms is null) return;
-        SelectedSmsText.Text = _selectedSms.Content;
-        SmsPhoneEntry.Text = _selectedSms.Address;
+        IReadOnlyList<MobileSmsListItem> items = _showSmsDrafts
+            ? MobileSmsOrganizer.Drafts(_smsMessages)
+            : MobileSmsOrganizer.Conversations(_smsMessages);
+        SmsConversationsButton.BackgroundColor = Color.FromArgb(
+            _showSmsDrafts ? "#25445E" : "#16875D");
+        SmsDraftsButton.BackgroundColor = Color.FromArgb(
+            _showSmsDrafts ? "#16875D" : "#25445E");
+        SmsList.ItemsSource = items;
+
+        int drafts = _smsMessages.Count(message => message.IsDraft);
+        int conversations = MobileSmsOrganizer.Conversations(_smsMessages).Count;
+        SmsStatusLabel.Text =
+            $"{conversations} conversation{(conversations == 1 ? "" : "s")} · " +
+            $"{drafts} draft{(drafts == 1 ? "" : "s")}";
+
+        MobileSmsListItem? selected = !string.IsNullOrWhiteSpace(preferredAddress)
+            ? items.FirstOrDefault(item => MobileSmsOrganizer.SameAddress(
+                item.Address,
+                preferredAddress))
+            : null;
+        SmsList.SelectedItem = null;
+        if (selected is null)
+        {
+            ClearSmsSelection();
+            return;
+        }
+        SmsList.SelectedItem = selected;
+        ShowSmsListItem(selected, preferredIdentity);
+    }
+
+    private void OnSmsListSelected(object sender, SelectionChangedEventArgs e)
+    {
+        if (e.CurrentSelection.FirstOrDefault() is MobileSmsListItem item)
+            ShowSmsListItem(item);
+    }
+
+    private void ShowSmsListItem(
+        MobileSmsListItem item,
+        string? preferredIdentity = null)
+    {
+        _selectedSmsListItem = item;
+        SmsThreadHeading.Text = item.DisplayAddress;
+        SmsThreadList.ItemsSource = item.Messages;
+        SmsPhoneEntry.Text = item.Address;
+        MobileSmsMessage selected = item.Messages.FirstOrDefault(message =>
+                string.Equals(message.Identity, preferredIdentity,
+                    StringComparison.Ordinal))
+            ?? item.Latest;
+        SmsThreadList.SelectedItem = selected;
+        SelectSmsMessage(selected);
+    }
+
+    private void OnSmsThreadSelected(object sender, SelectionChangedEventArgs e)
+    {
+        if (e.CurrentSelection.FirstOrDefault() is MobileSmsMessage message)
+            SelectSmsMessage(message);
+    }
+
+    private void SelectSmsMessage(MobileSmsMessage message)
+    {
+        _selectedSms = message;
+        SmsPhoneEntry.Text = message.Address;
+        if (message.IsDraft)
+        {
+            SmsBodyEntry.Text = message.Content;
+            SendSmsButton.Text = "Send draft";
+            SmsStatusLabel.Text = "Draft loaded. Review it, then send it again.";
+        }
+        else
+        {
+            SmsBodyEntry.Text = "";
+            SendSmsButton.Text = "Send SMS";
+        }
+        UpdateSmsActionButtons();
+    }
+
+    private void ClearSmsSelection()
+    {
+        _selectedSms = null;
+        _selectedSmsListItem = null;
+        SmsThreadList.SelectedItem = null;
+        SmsThreadList.ItemsSource = null;
+        SmsThreadHeading.Text = _showSmsDrafts
+            ? "Select a draft"
+            : "Select a conversation";
+        SendSmsButton.Text = "Send SMS";
+        UpdateSmsActionButtons();
+    }
+
+    private void UpdateSmsActionButtons()
+    {
+        MarkReadSmsButton.IsEnabled = _selectedSms is
+        {
+            IsInbox: true,
+            IsUnread: true
+        };
+        DeleteSmsButton.IsEnabled = _selectedSms is not null;
     }
 
     private async void OnMarkReadClicked(object sender, EventArgs e)
     {
         if (_client is null || _selectedSms is null) return;
-        try { await _client.SetSmsUnreadAsync(_selectedSms, false); await RefreshSmsAsync(); }
+        try
+        {
+            string address = _selectedSms.Address;
+            string identity = _selectedSms.Identity;
+            await _client.SetSmsUnreadAsync(_selectedSms, false);
+            await RefreshSmsAsync(address, identity);
+        }
         catch (Exception ex) { SmsStatusLabel.Text = FriendlyError(ex); }
     }
 
     private async void OnDeleteSmsClicked(object sender, EventArgs e)
     {
         if (_client is null || _selectedSms is null || !await DisplayAlert("Delete SMS", "Delete this message from the router?", "Delete", "Cancel")) return;
-        try { await _client.DeleteSmsAsync(_selectedSms); _selectedSms = null; SelectedSmsText.Text = "Select a message"; await RefreshSmsAsync(); }
+        try
+        {
+            string? address = _selectedSms.IsDraft ? null : _selectedSms.Address;
+            await _client.DeleteSmsAsync(_selectedSms);
+            _selectedSms = null;
+            await RefreshSmsAsync(address);
+        }
         catch (Exception ex) { SmsStatusLabel.Text = FriendlyError(ex); }
     }
 
@@ -275,7 +456,20 @@ public partial class MainPage : ContentPage
     {
         if (_client is null || string.IsNullOrWhiteSpace(SmsPhoneEntry.Text) || string.IsNullOrWhiteSpace(SmsBodyEntry.Text)) return;
         if (!await DisplayAlert("Send SMS", $"Send this message to {SmsPhoneEntry.Text.Trim()}?", "Send", "Cancel")) return;
-        try { SmsStatusLabel.Text = "Sending…"; await _client.SendSmsAsync(SmsPhoneEntry.Text.Trim(), SmsBodyEntry.Text); SmsBodyEntry.Text = ""; SmsStatusLabel.Text = "Sent."; await RefreshSmsAsync(); }
+        try
+        {
+            string recipient = SmsPhoneEntry.Text.Trim();
+            SmsStatusLabel.Text = _selectedSms?.IsDraft == true ? "Sending draft…" : "Sending…";
+            await _client.SendSmsAsync(recipient, SmsBodyEntry.Text);
+            if (_selectedSms?.IsDraft == true)
+                await _client.DeleteSmsAsync(_selectedSms);
+            _selectedSms = null;
+            _showSmsDrafts = false;
+            SmsBodyEntry.Text = "";
+            SendSmsButton.Text = "Send SMS";
+            SmsStatusLabel.Text = "Sent.";
+            await RefreshSmsAsync(recipient);
+        }
         catch (Exception ex) { SmsStatusLabel.Text = FriendlyError(ex); }
     }
 
@@ -290,7 +484,7 @@ public partial class MainPage : ContentPage
     {
         _selectedLte = e.CurrentSelection.FirstOrDefault() as MobileLteProfile;
         if (_selectedLte is null) return;
-        BandsEntry.Text = string.Join(",", _selectedLte.Band.Split('+').Select(value => value.Trim().TrimStart('B', 'b')));
+        BandsEntry.Text = _selectedLte.PrimaryBand.Trim().TrimStart('B', 'b');
         LockEarfcnEntry.Text = _selectedLte.Earfcn; LockPciEntry.Text = _selectedLte.Pci; LockCidEntry.Text = _selectedLte.CellId;
     }
 
@@ -298,10 +492,20 @@ public partial class MainPage : ContentPage
     {
         if (_client is null) return;
         int[] bands = (BandsEntry.Text ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(value => int.TryParse(value.TrimStart('B', 'b'), out int band) ? band : 0).Where(value => value > 0).ToArray();
-        if (bands.Length == 0) { LteStatusLabel.Text = "Enter at least one LTE band."; return; }
+        if (bands.Length != 1) { LteStatusLabel.Text = "Enter exactly one PCell band. The router selects SCells automatically."; return; }
         if (string.IsNullOrWhiteSpace(LockCidEntry.Text)) { LteStatusLabel.Text = "CID is required so different serving cells remain separate."; return; }
         if (!await DisplayAlert("Apply LTE lock", "The router connection may briefly disconnect. Apply this band/cell lock?", "Apply", "Cancel")) return;
         try { LteStatusLabel.Text = "Applying…"; await _client.ApplyLteLockAsync(bands, LockEarfcnEntry.Text ?? "", LockPciEntry.Text ?? "", LockCidEntry.Text); LteStatusLabel.Text = "Lock applied."; }
+        catch (Exception ex) { LteStatusLabel.Text = FriendlyError(ex); }
+    }
+
+    private async void OnApplyBandLockClicked(object sender, EventArgs e)
+    {
+        if (_client is null) return;
+        int[] bands = (BandsEntry.Text ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(value => int.TryParse(value.TrimStart('B', 'b'), out int band) ? band : 0).Where(value => value > 0).ToArray();
+        if (bands.Length != 1) { LteStatusLabel.Text = "Enter exactly one PCell band."; return; }
+        if (!await DisplayAlert("Apply Band Lock", $"Lock the modem to B{bands[0]} while leaving Cell Lock disabled?", "Apply", "Cancel")) return;
+        try { LteStatusLabel.Text = "Applying band lock…"; await _client.ApplyLteBandLockAsync(bands[0]); LteStatusLabel.Text = "Band Lock applied; cell selection remains automatic."; }
         catch (Exception ex) { LteStatusLabel.Text = FriendlyError(ex); }
     }
 
