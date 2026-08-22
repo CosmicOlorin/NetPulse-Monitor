@@ -1,5 +1,5 @@
 #define MyAppName "NetPulse Monitor"
-#define MyAppVersion "1.0.16"
+#define MyAppVersion "1.0.17"
 #define MyAppPublisher "CosmicOlorin"
 #define MyAppExeName "NetPulse Monitor.exe"
 
@@ -43,4 +43,3 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch NetPulse Monitor"; Flags: nowait postinstall skipifsilent
-
