@@ -54,6 +54,7 @@ internal sealed class CompanionService : IAsyncDisposable
     private Task? _acceptTask;
     private Task? _discoveryTask;
     private byte[] _key = [];
+    private byte[] _downloadToken = [];
 
     public bool IsRunning => _listener is not null;
     public int Port { get; private set; } = DefaultPort;
@@ -83,6 +84,9 @@ internal sealed class CompanionService : IAsyncDisposable
 
         Port = port;
         _key = SHA256.HashData(Encoding.UTF8.GetBytes(pairingSecret));
+        _downloadToken = HMACSHA256.HashData(
+            _key,
+            Encoding.UTF8.GetBytes("netpulse-android-download-v1"));
         PairingUri = BuildPairingUri(port, pairingSecret);
         _cancellation = new CancellationTokenSource();
         _listener = new TcpListener(IPAddress.Any, port);
@@ -117,6 +121,8 @@ internal sealed class CompanionService : IAsyncDisposable
         cancellation?.Dispose();
         CryptographicOperations.ZeroMemory(_key);
         _key = [];
+        CryptographicOperations.ZeroMemory(_downloadToken);
+        _downloadToken = [];
     }
 
     private async Task AcceptLoopAsync(CancellationToken cancellationToken)
@@ -157,7 +163,8 @@ internal sealed class CompanionService : IAsyncDisposable
                 return;
             }
             string method = request[0];
-            string path = request[1].Split('?', 2)[0];
+            string requestTarget = request[1];
+            string path = requestTarget.Split('?', 2)[0];
             string body = "";
             if (method == "POST")
             {
@@ -177,6 +184,14 @@ internal sealed class CompanionService : IAsyncDisposable
                 }
                 body = new string(content, 0, read);
             }
+            bool authorized = Authorize(method, path, headers, body);
+            bool downloadAuthorized = AuthorizeAndroidDownload(method, requestTarget);
+            if (!authorized && !downloadAuthorized)
+            {
+                await WriteResponseAsync(stream, 401, "application/json", "{\"error\":\"unauthorized\"}", cancellationToken);
+                return;
+            }
+
             if (path == "/v1/info")
             {
                 string info = JsonSerializer.Serialize(new { name = "NetPulse Monitor", protocol = 1, port = Port });
@@ -208,8 +223,8 @@ internal sealed class CompanionService : IAsyncDisposable
                     sha256 = Convert.ToHexString(await SHA256.HashDataAsync(source, cancellationToken));
                 string info = JsonSerializer.Serialize(new
                 {
-                    displayVersion = "1.0.17",
-                    versionCode = 10,
+                    displayVersion = "1.0.18",
+                    versionCode = 11,
                     size = apk.Length,
                     sha256,
                     downloadPath = "/download/android"
@@ -217,12 +232,6 @@ internal sealed class CompanionService : IAsyncDisposable
                 await WriteResponseAsync(stream, 200, "application/json", info, cancellationToken);
                 return;
             }
-            if (!Authorize(method, path, headers, body))
-            {
-                await WriteResponseAsync(stream, 401, "application/json", "{\"error\":\"unauthorized\"}", cancellationToken);
-                return;
-            }
-
             try
             {
                 object result = path switch
@@ -374,6 +383,28 @@ internal sealed class CompanionService : IAsyncDisposable
         }
     }
 
+    private bool AuthorizeAndroidDownload(string method, string requestTarget)
+    {
+        if (method != "GET" || _downloadToken.Length == 0)
+            return false;
+        string[] target = requestTarget.Split('?', 2);
+        if (target[0] != "/download/android" || target.Length != 2)
+            return false;
+        string? supplied = target[1]
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => part.Split('=', 2))
+            .Where(part => part.Length == 2 && part[0] == "token")
+            .Select(part => Uri.UnescapeDataString(part[1]))
+            .FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(supplied))
+            return false;
+        byte[] actual;
+        try { actual = FromBase64Url(supplied); }
+        catch (FormatException) { return false; }
+        return actual.Length == _downloadToken.Length &&
+               CryptographicOperations.FixedTimeEquals(actual, _downloadToken);
+    }
+
     private async Task DiscoveryLoopAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested && _discovery is not null)
@@ -425,8 +456,21 @@ internal sealed class CompanionService : IAsyncDisposable
     internal static string BuildPairingUri(int port, string secret) =>
         $"netpulse://pair?host={Uri.EscapeDataString(PreferredLanAddress())}&port={port}&key={Uri.EscapeDataString(secret)}&v=1";
 
-    internal static string BuildAndroidDownloadUri(int port) =>
-        $"http://{PreferredLanAddress()}:{port}/download/android";
+    internal static string BuildAndroidDownloadUri(int port, string pairingSecret)
+    {
+        byte[] key = SHA256.HashData(Encoding.UTF8.GetBytes(pairingSecret));
+        try
+        {
+            byte[] token = HMACSHA256.HashData(
+                key,
+                Encoding.UTF8.GetBytes("netpulse-android-download-v1"));
+            return $"http://{PreferredLanAddress()}:{port}/download/android?token={Uri.EscapeDataString(Base64Url(token))}";
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(key);
+        }
+    }
 
     private static string PreferredLanAddress()
     {

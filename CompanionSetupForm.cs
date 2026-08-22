@@ -162,7 +162,7 @@ internal sealed class CompanionSetupForm : Form
         _qr.Image = new Bitmap(image);
         previous?.Dispose();
 
-        string downloadUrl = CompanionService.BuildAndroidDownloadUri((int)_port.Value);
+        string downloadUrl = CompanionService.BuildAndroidDownloadUri((int)_port.Value, _secret);
         using QRCodeData downloadData = generator.CreateQrCode(downloadUrl, QRCodeGenerator.ECCLevel.Q);
         var downloadPng = new PngByteQRCode(downloadData);
         using var downloadStream = new MemoryStream(downloadPng.GetGraphic(8));
