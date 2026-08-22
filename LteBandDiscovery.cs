@@ -182,6 +182,27 @@ internal static class LteBandDiscovery
         return true;
     }
 
+    public static LteBandCellObservation RetainLockedPcellIdentity(
+        LteBandCellObservation lockedPcell,
+        LteBandCellObservation observed)
+    {
+        if (observed.HasCompleteIdentity || !lockedPcell.HasCompleteIdentity ||
+            !string.Equals(lockedPcell.PrimaryBand, observed.PrimaryBand,
+                StringComparison.OrdinalIgnoreCase) ||
+            (observed.Earfcn != "-" &&
+             !string.Equals(lockedPcell.Earfcn, observed.Earfcn,
+                 StringComparison.OrdinalIgnoreCase)))
+            return observed;
+
+        return observed with
+        {
+            Earfcn = lockedPcell.Earfcn,
+            Pci = lockedPcell.Pci,
+            CellId = lockedPcell.CellId,
+            Status = "Complete serving PCell retained from active Cell Lock"
+        };
+    }
+
     private static string NormalizeBandProfile(string? value, int fallbackBand)
     {
         int[] bands = ExtractBands(value).ToArray();
