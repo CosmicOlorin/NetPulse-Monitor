@@ -2,7 +2,7 @@
 
 ## Supported scope
 
-NetPulse Monitor 1.0.8 includes optional local LTE telemetry for the
+NetPulse Monitor includes optional local LTE telemetry for the
 TP-Link Archer MR600 v5 firmware family. The validated target is hardware v5
 running firmware `1.5.0 0.9.1 v0001.0 Build 251231 Rel.54154n`.
 
@@ -48,21 +48,27 @@ rather than scanning arbitrary mask bits. The verified MR600(EU) V5 profile
 contains LTE-FDD B1/B3/B5/B7/B8/B20/B28 and LTE-TDD B38/B40/B41. Other router
 revisions fall back to already observed bands until a verified profile is added.
 
-For each candidate, the app applies a band-only selection, ignores the first four
-seconds of potentially stale telemetry, and observes the remaining part of a
-30-second window. It retains distinct serving EARFCN/PCI/CID identities plus
-RSRP/RSRQ/SNR when exposed. A single-band result is accepted only when the live
-band profile contains exactly the requested band, preventing a stale PCell+SCell
-snapshot from being assigned to the next scan step.
+Discovery has three explicit stages. Stage 1 applies each band alone, ignores
+the first four seconds of potentially stale telemetry, and observes it for at
+least 30 seconds. If registration occurs before the full identity appears, it
+waits up to 75 seconds for three consecutive matching EARFCN/PCI/CID readings.
+A single-band result is accepted only when the live band profile contains
+exactly the requested band, preventing a stale PCell+SCell snapshot from being
+assigned to the next scan step.
+
+Stage 2 locks each complete PCell and exposes all bands that Stage 1 actually
+found, recording the ordered PCell + SCell sets selected by the modem. Stage 3
+reapplies and measures each unique PCell + ordered set. The first band stays the
+PCell, so B20 + B3 and B3 + B20 are not merged.
 
 The operation snapshots the complete existing band mask and Cell Lock state,
 writes a pending-recovery record before changing the router, and restores the
 snapshot on completion, cancellation or error. Exit waits for the restoration.
 Scan-induced transitions are excluded from recommendation history, outage
 attribution, automatic speed-test triggers and public-IP-change triggers. Full
-results are appended to `band-cell-discovery.csv`. Lock-ready results are also
-added to the normal LTE History store as candidates with no invented score,
-speed, latency, or outage evidence.
+results are appended to `band-cell-discovery.csv`. Only complete EARFCN/PCI/CID
+results are added to LTE History as lock-ready candidates. Stage 3 stores the
+actual radio samples it measures; no missing identity or measurement is invented.
 
 ### Mobile network mode
 
@@ -85,10 +91,10 @@ are attributed to the most recently observed cell; transient router-page errors
 are not counted as mobile disconnections. Speed-test results are attached only
 when the same cell remains active for the complete test.
 
-A ranked recommendation requires at least ten minutes of connected observation
-and one speed test. Its normalized score is 50% average download, 40% confirmed
-disconnections per connected hour and 10% average upload. Medium or high
-confidence requires longer observation and multiple speed tests.
+A ranked recommendation requires a CID, at least ten minutes of connected
+observation and complete SINR, RSRQ and RSRP samples. Its normalized score is
+50% SINR, 35% RSRQ and 15% RSRP. Throughput, ping and confirmed disconnections
+remain diagnostic evidence but do not change that score.
 
 Each cell also has four local-time periods: night (00–06), morning (06–12),
 afternoon (12–18) and evening (18–24). Current-period results are blended with
@@ -98,7 +104,8 @@ counters are unavailable it shows connection-time share instead. Usage changes
 confidence, never the reliability/download/upload priority.
 
 The MR600 v5 Cell Lock fields and band masks were verified against the installed
-router page definitions. EARFCN and PCI are required. CID is optional. Manual
+router page definitions. The router accepts an optional CID, but NetPulse requires
+CID for stored history identities and recommendation locks. Manual
 changes require confirmation. Automatic locking is disabled by default and, when
 explicitly enabled, uses only medium/high-confidence recommendations. It checks
 for a changing time-of-day winner every minute, requires a material improvement,
@@ -114,11 +121,13 @@ to Auto.
 
 The validated v5 firmware returns live `rfInfoPCellBand`,
 `rfInfoPCellChannel`, `rfInfoSCellBand` and `rfInfoSCellChannel`; the primary
-channel is used as live EARFCN. In automatic mode it does not return live PCI or
-CID. NetPulse therefore learns the B3/B3+B1/B3+B20-style profiles without those
-identifiers, and applies a measured band-only profile with Cell Lock disabled.
-When PCI is available, the same workflow applies the full cell + band target.
-Missing values are never synthesized.
+channel is used as live EARFCN. Some builds omit PCI/CID from `LTE_NET_STATUS`
+but publish the current serving identity through the read-only `LTE_CELL_LOCK`
+status after registration. NetPulse accepts those PCI/CID values only when that
+object's EARFCN exactly matches the current live PCell EARFCN. A stale configured
+lock target therefore cannot be assigned to a different serving cell. If the
+firmware still does not expose a complete identity, it remains incomplete and
+is not stored as a lock-ready history row.
 
 After a stable band or cell transition, NetPulse runs a 20 MB download / 5 MB
 upload test and attributes it only when the same LTE state remains active through
@@ -161,7 +170,7 @@ Passwords, hashes, AES keys, RSA signatures, cookies, tokens, raw request bodies
 raw responses, IMEI, MAC addresses, IP addresses, DNS addresses and SSIDs are
 excluded.
 
-The optional CID can also exist in `lte-cell-history.json` and in a temporary
+The required history CID can also exist in `lte-cell-history.json` and in a temporary
 rollback record in `settings.json`. A user-created ISP evidence package includes
 full cell identifiers and IP diagnostics but excludes all authentication data.
 
@@ -208,9 +217,9 @@ user-managed VPN back to the router LAN is the recommended remote approach.
 - LTE stack discovery and allowlisted telemetry request construction;
 - telemetry parsing, LTE band mapping and 64-bit counters;
 - unified SMS Inbox/Sent/Drafts parsing, unread updates, sending and draft saving;
-- optional-CID Cell Lock construction and LTE band-mask encoding;
+- complete-CID recommendation lock construction and LTE band-mask encoding;
 - restoration of the original automatic-selection state;
-- LTE history filtering, time-period grouping and 50/40/10 weighted ranking;
+- LTE history filtering, current-period projection and 50/35/15 radio ranking;
 - different morning/evening winners, evidence weighting and traffic-use share;
 - clear wrong-password rejection;
 - refusal to connect to a public Internet destination;
@@ -230,3 +239,4 @@ No captured router traffic or proprietary firmware assets are committed.
 - [Archer MR600 network-mode guide](https://www.tp-link.com/us/user-guides/archer-mr600_v1/chapter-4-set-up-internet-connections)
 - [Archer NX200/NX210 user guide](https://static.tp-link.com/upload/manual/2025/202505/20250509/1910013657_Archer%20NX210%28EU%291.0_UG_REV1.0.0.pdf)
 - [TP-Link Cell Lock guide](https://www.tp-link.com/uk/support/faq/4986/)
+
