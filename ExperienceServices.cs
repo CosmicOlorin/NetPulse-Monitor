@@ -227,19 +227,10 @@ internal static class SmsConversationBuilder
         string? search = null,
         string? countryCode = null)
     {
-        string term = search?.Trim() ?? "";
-        string normalizedTerm = NormalizeAddress(term, countryCode);
         return messages
-            .Where(message => term.Length == 0 ||
-                message.Address.Contains(term, StringComparison.OrdinalIgnoreCase) ||
-                (normalizedTerm.Length > 0 &&
-                 NormalizeAddress(message.Address, countryCode)
-                     .Contains(normalizedTerm, StringComparison.Ordinal)) ||
-                message.Content.Contains(term, StringComparison.OrdinalIgnoreCase) ||
-                (contacts.TryGetValue(
-                     NormalizeAddress(message.Address, countryCode),
-                     out string? name) &&
-                 name.Contains(term, StringComparison.OrdinalIgnoreCase)))
+            .Where(IsConversationMessage)
+            .Where(message => MatchesSearch(
+                message, contacts, search, countryCode))
             .GroupBy(
                 message => NormalizeAddress(message.Address, countryCode),
                 StringComparer.Ordinal)
@@ -263,6 +254,46 @@ internal static class SmsConversationBuilder
             .ThenBy(conversation => conversation.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
+
+    public static IReadOnlyList<RouterSmsMessage> MessagesForAddress(
+        IEnumerable<RouterSmsMessage> messages,
+        string address,
+        string? countryCode = null)
+    {
+        string normalized = NormalizeAddress(address, countryCode);
+        return messages
+            .Where(IsConversationMessage)
+            .Where(message => string.Equals(
+                NormalizeAddress(message.Address, countryCode),
+                normalized,
+                StringComparison.Ordinal))
+            .OrderBy(message => message.Timestamp ?? DateTime.MinValue)
+            .ThenBy(message => message.Identity, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    public static bool MatchesSearch(
+        RouterSmsMessage message,
+        IReadOnlyDictionary<string, string> contacts,
+        string? search,
+        string? countryCode = null)
+    {
+        string term = search?.Trim() ?? "";
+        if (term.Length == 0)
+            return true;
+
+        string normalizedAddress = NormalizeAddress(message.Address, countryCode);
+        string normalizedTerm = NormalizeAddress(term, countryCode);
+        return message.Address.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+               (normalizedTerm.Length > 0 &&
+                normalizedAddress.Contains(normalizedTerm, StringComparison.Ordinal)) ||
+               message.Content.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+               (contacts.TryGetValue(normalizedAddress, out string? name) &&
+                name.Contains(term, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsConversationMessage(RouterSmsMessage message) =>
+        message.Folder is RouterSmsFolder.Inbox or RouterSmsFolder.Sent;
 
     public static string NormalizeAddress(string address, string? countryCode = null)
     {
