@@ -8,6 +8,10 @@ namespace NetPulseMonitor;
 
 internal sealed class MainForm : Form
 {
+    private const int SmsConversationsView = 0;
+    private const int SmsDraftsView = 1;
+    private const int SmsTimelineView = 2;
+
     private readonly CsvLogger _logger;
     private readonly LteCellHistoryStore _cellHistory;
     private AppSettings _settings = AppSettings.Load();
@@ -1307,9 +1311,9 @@ internal sealed class MainForm : Form
         }, 0, 0);
         _smsViewInput.Dock = DockStyle.Fill;
         _smsViewInput.DropDownStyle = ComboBoxStyle.DropDownList;
-        _smsViewInput.Items.AddRange(["Conversations", "Timeline"]);
-        _smsViewInput.SelectedIndex = 0;
-        _smsViewInput.SelectedIndexChanged += (_, _) => PopulateSmsGrid();
+        _smsViewInput.Items.AddRange(["Conversations", "Drafts", "Timeline"]);
+        _smsViewInput.SelectedIndex = SmsConversationsView;
+        _smsViewInput.SelectedIndexChanged += (_, _) => ChangeSmsView();
         smsFilters.Controls.Add(_smsViewInput, 1, 0);
         smsFilters.Controls.Add(new Label
         {
@@ -1352,8 +1356,22 @@ internal sealed class MainForm : Form
         _smsGrid.Columns[3].FillWeight = 34;
         _smsGrid.SelectionChanged += async (_, _) =>
         {
-            if (!_populatingSmsGrid)
-                await OpenSelectedSmsAsync(markRead: false);
+            if (_populatingSmsGrid || _smsGrid.SelectedRows.Count == 0)
+                return;
+            if (_smsGrid.SelectedRows[0].Tag is SmsConversationRow conversation)
+            {
+                string normalized = SmsConversationBuilder.NormalizeAddress(
+                    conversation.Address,
+                    _settings.CountryCode);
+                if (!string.Equals(
+                        normalized,
+                        _activeSmsConversationAddress,
+                        StringComparison.Ordinal) ||
+                    _smsThreadPanel.Controls.Count == 0)
+                    ShowSmsConversation(conversation.Address);
+                return;
+            }
+            await OpenSelectedSmsAsync(markRead: false);
         };
         _smsGrid.CellClick += async (_, args) =>
         {
@@ -3225,7 +3243,16 @@ internal sealed class MainForm : Form
             DataGridViewRow? firstVisibleRow = null;
             DataGridViewRow? activeConversationRow = null;
             string search = _smsSearchInput.Text.Trim();
-            if (_smsViewInput.SelectedIndex == 0)
+            bool conversationsView =
+                _smsViewInput.SelectedIndex == SmsConversationsView;
+            bool draftsView = _smsViewInput.SelectedIndex == SmsDraftsView;
+            _smsGrid.Columns["SmsFrom"].HeaderText = conversationsView
+                ? "Conversation"
+                : draftsView ? "To" : "Contact / number";
+            _smsGrid.Columns["SmsReceived"].HeaderText = conversationsView
+                ? "Latest"
+                : draftsView ? "Saved" : "Time";
+            if (conversationsView)
             {
                 IReadOnlyList<SmsConversation> conversations =
                     SmsConversationBuilder.Build(
@@ -3290,17 +3317,20 @@ internal sealed class MainForm : Form
             }
             else
             {
-                IEnumerable<RouterSmsMessage> messages = _smsMessages;
-                if (search.Length > 0)
-                {
-                    messages = SmsConversationBuilder.Build(
-                            _smsMessages,
-                            _settings.SmsContacts,
-                            search,
-                            _settings.CountryCode)
-                        .SelectMany(conversation => conversation.Messages)
-                        .OrderByDescending(message => message.Timestamp ?? DateTime.MinValue);
-                }
+                IEnumerable<RouterSmsMessage> messages = _smsMessages
+                    .Where(message => draftsView
+                        ? message.Folder == RouterSmsFolder.Draft
+                        : message.Folder is RouterSmsFolder.Inbox or
+                            RouterSmsFolder.Sent)
+                    .Where(message => SmsConversationBuilder.MatchesSearch(
+                        message,
+                        _settings.SmsContacts,
+                        search,
+                        _settings.CountryCode))
+                    .OrderByDescending(message =>
+                        message.Timestamp ?? DateTime.MinValue)
+                    .ThenByDescending(message => message.Identity,
+                        StringComparer.Ordinal);
                 foreach (RouterSmsMessage message in messages)
                 {
                     AddSmsMessageRow(
@@ -3310,6 +3340,9 @@ internal sealed class MainForm : Form
                         ref selectedRow,
                         ref firstVisibleRow);
                 }
+                if (draftsView && selectedRow is null &&
+                    _smsGrid.Rows.Count > 0)
+                    selectedRow = _smsGrid.Rows[0];
             }
 
             _smsGrid.ClearSelection();
@@ -3340,7 +3373,8 @@ internal sealed class MainForm : Form
             _populatingSmsGrid = false;
         }
 
-        if (_smsViewInput.SelectedIndex == 0 && !_smsNewConversation &&
+        if (_smsViewInput.SelectedIndex == SmsConversationsView &&
+            !_smsNewConversation &&
             !string.IsNullOrWhiteSpace(_activeSmsConversationAddress))
         {
             RenderSmsConversation(_activeSmsConversationAddress, selectedIdentity);
@@ -3358,6 +3392,17 @@ internal sealed class MainForm : Form
             else
                 DisplaySmsMessage(restoredMessage);
         }
+    }
+
+    private void ChangeSmsView()
+    {
+        _selectedSmsMessage = null;
+        _smsNewConversation = false;
+        _activeSmsConversationAddress = null;
+        _smsComposeInput.Clear();
+        if (_smsViewInput.SelectedIndex == SmsConversationsView)
+            _smsConversationInitialized = false;
+        PopulateSmsGrid();
     }
 
     private void AddSmsMessageRow(
@@ -3387,9 +3432,16 @@ internal sealed class MainForm : Form
 
     private void ShowSmsConversation(string address, string? selectedIdentity = null)
     {
+        string normalized = SmsConversationBuilder.NormalizeAddress(
+            address,
+            _settings.CountryCode);
+        if (!string.Equals(
+                normalized,
+                _activeSmsConversationAddress,
+                StringComparison.Ordinal))
+            _smsComposeInput.Clear();
         _smsNewConversation = false;
-        _activeSmsConversationAddress =
-            SmsConversationBuilder.NormalizeAddress(address, _settings.CountryCode);
+        _activeSmsConversationAddress = normalized;
         RenderSmsConversation(_activeSmsConversationAddress, selectedIdentity);
 
         DataGridViewRow? conversationRow = _smsGrid.Rows
@@ -3414,15 +3466,10 @@ internal sealed class MainForm : Form
         string normalized = SmsConversationBuilder.NormalizeAddress(
             address,
             _settings.CountryCode);
-        RouterSmsMessage[] messages = _smsMessages
-            .Where(message => string.Equals(
-                SmsConversationBuilder.NormalizeAddress(
-                    message.Address,
-                    _settings.CountryCode),
+        RouterSmsMessage[] messages = SmsConversationBuilder.MessagesForAddress(
+                _smsMessages,
                 normalized,
-                StringComparison.Ordinal))
-            .OrderBy(message => message.Timestamp ?? DateTime.MinValue)
-            .Take(1)
+                _settings.CountryCode)
             .ToArray();
         if (messages.Length == 0)
         {
@@ -3542,8 +3589,10 @@ internal sealed class MainForm : Form
             _selectedSmsMessage = message;
             if (message.Folder == RouterSmsFolder.Inbox && message.IsUnread)
                 await SetSmsUnreadAsync(message, unread: false, automatic: true);
-            else
+            else if (_smsViewInput.SelectedIndex == SmsConversationsView)
                 RenderSmsConversation(conversationAddress, message.Identity);
+            else
+                DisplaySmsMessage(message);
         };
         bubble.Cursor = Cursors.Hand;
         bubble.Click += open;
@@ -3627,8 +3676,10 @@ internal sealed class MainForm : Form
         _smsReceived.Text = FormatSmsTimestamp(message);
         _smsRecipientInput.ReadOnly = true;
         SetSmsRecipientText(message.Address);
-        if (_smsViewInput.SelectedIndex == 0)
+        if (_smsViewInput.SelectedIndex == SmsConversationsView)
             RenderSmsConversation(message.Address, message.Identity);
+        else
+            RenderSingleSmsMessage(message);
         UpdateSmsActionButtons();
     }
 
@@ -3640,11 +3691,31 @@ internal sealed class MainForm : Form
         _smsReceived.Text = FormatSmsTimestamp(message);
         _smsRecipientInput.ReadOnly = true;
         SetSmsRecipientText(message.Address);
+        RenderSingleSmsMessage(message);
         if (message.Folder == RouterSmsFolder.Draft)
         {
             _smsComposeInput.Text = message.Content;
         }
         UpdateSmsActionButtons();
+    }
+
+    private void RenderSingleSmsMessage(RouterSmsMessage message)
+    {
+        bool dark = IsDarkThemeActive();
+        _smsThreadPanel.SuspendLayout();
+        try
+        {
+            _smsThreadPanel.Controls.Clear();
+            _smsThreadPanel.BackColor = dark
+                ? Color.FromArgb(27, 32, 39)
+                : Color.FromArgb(244, 247, 250);
+            _smsThreadPanel.Controls.Add(CreateSmsBubbleRow(message, dark));
+        }
+        finally
+        {
+            _smsThreadPanel.ResumeLayout(performLayout: true);
+        }
+        ResizeSmsConversationRows();
     }
 
     private async Task SetSelectedSmsUnreadAsync(bool unread, bool automatic)
@@ -3714,7 +3785,7 @@ internal sealed class MainForm : Form
                 timeout.Token);
             message.IsUnread = unread;
             UpdateSmsRowState(message);
-            if (_smsViewInput.SelectedIndex == 0)
+            if (_smsViewInput.SelectedIndex == SmsConversationsView)
             {
                 _activeSmsConversationAddress =
                     SmsConversationBuilder.NormalizeAddress(
@@ -3723,7 +3794,8 @@ internal sealed class MainForm : Form
                 PopulateSmsGrid(message.Identity);
             }
             UpdateSmsStatusSummary();
-            if (!unread)
+            if (!unread &&
+                _smsViewInput.SelectedIndex != SmsConversationsView)
                 DisplaySmsMessage(message);
             _smsStatus.Text = unread
                 ? "Message marked unread on the MR600."
@@ -3865,6 +3937,8 @@ internal sealed class MainForm : Form
 
     private void StartNewSms()
     {
+        if (_smsViewInput.SelectedIndex != SmsConversationsView)
+            _smsViewInput.SelectedIndex = SmsConversationsView;
         _smsNewConversation = true;
         _smsConversationInitialized = true;
         _activeSmsConversationAddress = null;
@@ -3907,6 +3981,8 @@ internal sealed class MainForm : Form
             address,
             _settings.CountryCode);
         RouterSmsMessage? existing = _smsMessages
+            .Where(message => message.Folder is RouterSmsFolder.Inbox or
+                RouterSmsFolder.Sent)
             .Where(message => string.Equals(
                 SmsConversationBuilder.NormalizeAddress(
                     message.Address,
@@ -3953,6 +4029,8 @@ internal sealed class MainForm : Form
                 content,
                 _smsSendCancellation.Token);
             _smsNewConversation = false;
+            if (_smsViewInput.SelectedIndex != SmsConversationsView)
+                _smsViewInput.SelectedIndex = SmsConversationsView;
             _activeSmsConversationAddress =
                 SmsConversationBuilder.NormalizeAddress(
                     recipient,
@@ -4010,10 +4088,9 @@ internal sealed class MainForm : Form
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             await _routerMonitor.SaveSmsDraftAsync(recipient, content, timeout.Token);
             _smsNewConversation = false;
-            _activeSmsConversationAddress =
-                SmsConversationBuilder.NormalizeAddress(
-                    recipient,
-                    _settings.CountryCode);
+            if (_smsViewInput.SelectedIndex != SmsDraftsView)
+                _smsViewInput.SelectedIndex = SmsDraftsView;
+            _activeSmsConversationAddress = null;
             _smsRecipientInput.ReadOnly = true;
             _smsComposeInput.Clear();
             _smsStatus.Text = "Draft saved on the MR600.";
@@ -6945,8 +7022,10 @@ internal sealed class MainForm : Form
 
         RouterSmsMessage? target = _smsMessages.FirstOrDefault(message =>
             string.Equals(message.Identity, messageIdentity, StringComparison.Ordinal));
-        if (target is not null && _smsViewInput.SelectedIndex == 0)
+        if (target is not null)
         {
+            if (_smsViewInput.SelectedIndex != SmsConversationsView)
+                _smsViewInput.SelectedIndex = SmsConversationsView;
             _activeSmsConversationAddress =
                 SmsConversationBuilder.NormalizeAddress(
                     target.Address,
@@ -7209,4 +7288,3 @@ internal sealed class MainForm : Form
         int RowIndex,
         string? RecommendationKey);
 }
-
