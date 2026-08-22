@@ -1696,6 +1696,26 @@ static void TestBandDiscovery()
         "A serving band without PCI/CID must remain pending, not count as a " +
         "completed discovery identity.");
 
+    LteBandCellObservation aggregated = incompleteCell! with
+    {
+        ServingProfile = "B3 + B20",
+        PrimaryBand = "B3"
+    };
+    LteBandCellObservation retained =
+        LteBandDiscovery.RetainLockedPcellIdentity(cell!, aggregated);
+    Require(retained.HasCompleteIdentity && retained.Earfcn == "1700" &&
+            retained.Pci == "77" && retained.CellId == "ABCDE",
+        "An aggregated serving set must retain the actively locked PCell " +
+        "identity when its PCell band and EARFCN have not changed.");
+    LteBandCellObservation changedPcell = aggregated with
+    {
+        PrimaryBand = "B20",
+        Earfcn = "6300"
+    };
+    Require(!LteBandDiscovery.RetainLockedPcellIdentity(
+                cell!, changedPcell).HasCompleteIdentity,
+        "PCell identity must not be retained when the primary band or EARFCN changes.");
+
     bool staleCombinationAccepted = LteBandDiscovery.TryReadServingCell(
         3,
         new RouterTelemetry
