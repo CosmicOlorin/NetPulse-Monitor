@@ -24,8 +24,14 @@ internal sealed class MainForm : Form
     private readonly Dictionary<string, Label> _metrics = new();
     private readonly Dictionary<string, Panel> _metricCards = new();
     private readonly TableLayoutPanel _dashboardMetricGrid = new();
+    private readonly TableLayoutPanel _dashboardExperienceGrid = new();
     private readonly Dictionary<string, Label> _routerMetrics = new();
     private readonly Dictionary<string, Label> _routerMetricCaptions = new();
+    private readonly Dictionary<string, Panel> _routerMetricCards = new();
+    private readonly TableLayoutPanel _routerMetricGrid = new();
+    private readonly Button _connectionDetailsToggleButton = new();
+    private RowStyle? _dashboardConnectionRowStyle;
+    private bool _connectionDetailsExpanded;
     private readonly PingChartControl _chart = new();
     private readonly DataGridView _eventsGrid = new();
     private readonly DataGridView _cellHistoryGrid = new FlickerFreeDataGridView();
@@ -380,7 +386,7 @@ internal sealed class MainForm : Form
 
         var subtitle = new Label
         {
-            Text = "Continuous LTE and internet connection monitoring",
+            Text = "End-to-end Internet monitoring with optional router telemetry",
             ForeColor = Color.DimGray,
             Dock = DockStyle.Fill,
             AutoSize = false,
@@ -406,7 +412,6 @@ internal sealed class MainForm : Form
         _tabs.Dock = DockStyle.Fill;
         _tabs.Padding = new Point(16, 7);
         _tabs.TabPages.Add(BuildDashboardTab());
-        _tabs.TabPages.Add(BuildConnectionDetailsTab());
         _tabs.TabPages.Add(BuildConnectedDevicesTab());
         _tabs.TabPages.Add(BuildLteHistoryTab());
         _tabs.TabPages.Add(BuildManualCellLockTab());
@@ -478,32 +483,31 @@ internal sealed class MainForm : Form
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            RowCount = 4,
+            RowCount = 5,
             ColumnCount = 1
         };
 
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 115));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 365));
+        _dashboardConnectionRowStyle = new RowStyle(SizeType.Absolute, 74);
+        layout.RowStyles.Add(_dashboardConnectionRowStyle);
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 285));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
 
-        var experience = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 3,
-            RowCount = 1,
-            Margin = Padding.Empty
-        };
-        experience.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 27));
-        experience.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
-        experience.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 31));
-        experience.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        _dashboardExperienceGrid.Dock = DockStyle.Fill;
+        _dashboardExperienceGrid.ColumnCount = 3;
+        _dashboardExperienceGrid.RowCount = 1;
+        _dashboardExperienceGrid.Margin = Padding.Empty;
+        _dashboardExperienceGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 27));
+        _dashboardExperienceGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
+        _dashboardExperienceGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 31));
+        _dashboardExperienceGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         ConfigureHealthCard();
         ConfigureSmartCard();
         ConfigureUpdatesCard();
-        experience.Controls.Add(_healthCard, 0, 0);
-        experience.Controls.Add(_smartCard, 1, 0);
-        experience.Controls.Add(_updatesCard, 2, 0);
+        _dashboardExperienceGrid.Controls.Add(_healthCard, 0, 0);
+        _dashboardExperienceGrid.Controls.Add(_smartCard, 1, 0);
+        _dashboardExperienceGrid.Controls.Add(_updatesCard, 2, 0);
 
         _dashboardMetricGrid.Dock = DockStyle.Fill;
         _dashboardMetricGrid.ColumnCount = 4;
@@ -515,24 +519,25 @@ internal sealed class MainForm : Form
             _dashboardMetricGrid.RowStyles.Add(
                 new RowStyle(SizeType.Percent, 12.5F));
         AddMetric(_dashboardMetricGrid, 0, 0, "CURRENT LTE SET / CELL", "CurrentLteSet");
+        AddMetric(_dashboardMetricGrid, 0, 0, "ACCESS TECHNOLOGY", "AccessType");
         AddMetric(_dashboardMetricGrid, 1, 0, "CURRENT PUBLIC IP", "CurrentIp");
-        AddMetric(_dashboardMetricGrid, 2, 0, "CURRENT PING", "Ping");
-        AddMetric(_dashboardMetricGrid, 3, 0, "SESSION AVG PING", "SessionAveragePing");
+        AddMetric(_dashboardMetricGrid, 2, 0, "PC → INTERNET PING", "Ping");
+        AddMetric(_dashboardMetricGrid, 3, 0, "SESSION AVG PC PING", "SessionAveragePing");
 
-        AddMetric(_dashboardMetricGrid, 0, 1, "RECENT JITTER", "Jitter");
-        AddMetric(_dashboardMetricGrid, 1, 1, "RECENT PACKET LOSS", "Loss");
+        AddMetric(_dashboardMetricGrid, 0, 1, "PC → INTERNET JITTER", "Jitter");
+        AddMetric(_dashboardMetricGrid, 1, 1, "PC → INTERNET LOSS", "Loss");
         AddMetric(_dashboardMetricGrid, 2, 1, "SESSION FAILURES", "SuccessFail");
-        AddMetric(_dashboardMetricGrid, 3, 1, "SESSION AVG JITTER", "SessionAverageJitter");
+        AddMetric(_dashboardMetricGrid, 3, 1, "SESSION AVG PC JITTER", "SessionAverageJitter");
 
         AddMetric(_dashboardMetricGrid, 0, 2, "TOTAL DOWNTIME", "Downtime");
         AddMetric(_dashboardMetricGrid, 1, 2, "SESSION AVAILABILITY", "Availability");
         AddMetric(_dashboardMetricGrid, 2, 2, "SESSION OUTAGES", "Outages");
-        AddMetric(_dashboardMetricGrid, 3, 2, "SESSION AVG LOSS", "SessionAverageLoss");
+        AddMetric(_dashboardMetricGrid, 3, 2, "SESSION AVG PC LOSS", "SessionAverageLoss");
 
-        AddMetric(_dashboardMetricGrid, 0, 3, "LAST DOWNLOAD TEST", "Download");
-        AddMetric(_dashboardMetricGrid, 1, 3, "LAST UPLOAD TEST", "Upload");
-        AddMetric(_dashboardMetricGrid, 2, 3, "SPEEDTEST PING", "SpeedPing");
-        AddMetric(_dashboardMetricGrid, 3, 3, "SPEEDTEST LOSS", "SpeedLoss");
+        AddMetric(_dashboardMetricGrid, 0, 3, "PC SPEEDTEST DOWNLOAD", "Download");
+        AddMetric(_dashboardMetricGrid, 1, 3, "PC SPEEDTEST UPLOAD", "Upload");
+        AddMetric(_dashboardMetricGrid, 2, 3, "PC SPEEDTEST PING", "SpeedPing");
+        AddMetric(_dashboardMetricGrid, 3, 3, "PC SPEEDTEST LOSS", "SpeedLoss");
         AddMetric(
             _dashboardMetricGrid,
             0,
@@ -566,7 +571,7 @@ internal sealed class MainForm : Form
         diagnosticsStrip.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         diagnosticsStrip.Controls.Add(new Label
         {
-            Text = "LOCAL NETWORK CHECKS",
+            Text = "PC → ROUTER / DNS",
             Dock = DockStyle.Fill,
             ForeColor = Color.DimGray,
             Font = new Font("Segoe UI", 8.5F),
@@ -654,10 +659,11 @@ internal sealed class MainForm : Form
         controls.Controls.Add(resetButton);
         controls.Controls.Add(openLogs);
 
-        layout.Controls.Add(experience, 0, 0);
-        layout.Controls.Add(_dashboardMetricGrid, 0, 1);
-        layout.Controls.Add(chartArea, 0, 2);
-        layout.Controls.Add(controls, 0, 3);
+        layout.Controls.Add(_dashboardExperienceGrid, 0, 0);
+        layout.Controls.Add(BuildDashboardConnectionPanel(), 0, 1);
+        layout.Controls.Add(_dashboardMetricGrid, 0, 2);
+        layout.Controls.Add(chartArea, 0, 3);
+        layout.Controls.Add(controls, 0, 4);
 
         page.Controls.Add(layout);
         return page;
@@ -665,7 +671,7 @@ internal sealed class MainForm : Form
 
     private void ConfigureHealthCard()
     {
-        ConfigureExperienceCard(_healthCard, "CONNECTION HEALTH");
+        ConfigureExperienceCard(_healthCard, "END-TO-END HEALTH (THIS PC)");
         var content = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -688,6 +694,9 @@ internal sealed class MainForm : Form
         _healthSummary.TextAlign = ContentAlignment.MiddleLeft;
         _healthSummary.Padding = new Padding(8, 0, 2, 0);
         _healthSummary.Text = "Waiting for measurements";
+        _buttonTips.SetToolTip(
+            _healthCard,
+            "End-to-end health as experienced by this PC. It combines PC-to-Internet monitoring, PC-to-router/DNS checks and LTE radio telemetry only when Mobile/LTE is selected. Heavy local traffic can reduce this score.");
         content.Controls.Add(_healthScore, 0, 0);
         content.Controls.Add(_healthSummary, 1, 0);
         _healthCard.Controls.Add(content);
@@ -695,7 +704,7 @@ internal sealed class MainForm : Form
 
     private void ConfigureSmartCard()
     {
-        ConfigureExperienceCard(_smartCard, "SMART LTE RECOMMENDATION");
+        ConfigureExperienceCard(_smartCard, "ROUTER LTE RECOMMENDATION");
         var actions = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
@@ -705,7 +714,7 @@ internal sealed class MainForm : Form
             Margin = Padding.Empty,
             Padding = Padding.Empty
         };
-        _smartApplyButton.Text = "Apply safely...";
+        _smartApplyButton.Text = "Apply safely";
         _smartApplyButton.Size = new Size(112, 30);
         _smartApplyButton.Enabled = false;
         _smartApplyButton.Click += async (_, _) =>
@@ -775,23 +784,18 @@ internal sealed class MainForm : Form
             title.Width = Math.Max(0, card.ClientSize.Width - 24);
     }
 
-    private TabPage BuildConnectionDetailsTab()
+    private Control BuildDashboardConnectionPanel()
     {
-        var page = new TabPage("Connection details")
-        {
-            BackColor = Color.FromArgb(244, 247, 250),
-            Padding = new Padding(12)
-        };
-
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            RowCount = 3,
-            ColumnCount = 1
+            RowCount = 2,
+            ColumnCount = 1,
+            Margin = new Padding(4, 2, 4, 2),
+            BackColor = Color.White
         };
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 122));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 60));
 
         var statusPanel = new TableLayoutPanel
         {
@@ -799,12 +803,12 @@ internal sealed class MainForm : Form
             ColumnCount = 3,
             RowCount = 1,
             BackColor = Color.White,
-            Padding = new Padding(12, 8, 12, 8),
-            Margin = new Padding(5)
+            Padding = new Padding(8, 6, 8, 6),
+            Margin = Padding.Empty
         };
-        statusPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 185));
+        statusPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
         statusPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        statusPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 320));
+        statusPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 520));
         statusPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         _routerConnectionState.Text = "NOT CONFIGURED";
@@ -827,13 +831,15 @@ internal sealed class MainForm : Form
         var selectors = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 2,
-            RowCount = 1,
+            ColumnCount = 3,
+            RowCount = 2,
             Padding = new Padding(8, 0, 0, 0)
         };
         selectors.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));
         selectors.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        selectors.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        selectors.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
+        selectors.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        selectors.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
         var accessLabel = new Label
         {
             Text = "Access",
@@ -856,59 +862,60 @@ internal sealed class MainForm : Form
             };
             if (IsHandleCreated)
                 _settings.Save();
+            if (_settings.ConnectionDetailsView == "Lte" &&
+                _settings.DashboardLayout == "DSL / Fiber")
+                _settings.DashboardLayout = "LTE Advanced";
+            else if (_settings.ConnectionDetailsView != "Lte")
+                _settings.DashboardLayout = "DSL / Fiber";
+            if (_dashboardLayoutInput.Items.Count > 0)
+                _dashboardLayoutInput.SelectedItem = _settings.DashboardLayout;
+            ApplyDashboardLayout();
             RefreshRouterDashboard(_routerMonitor.GetSnapshot());
+            RefreshDashboard();
         };
 
         selectors.Controls.Add(accessLabel, 0, 0);
         selectors.Controls.Add(_connectionViewInput, 1, 0);
-        statusPanel.Controls.Add(selectors, 2, 0);
+        selectors.SetRowSpan(accessLabel, 2);
+        selectors.SetRowSpan(_connectionViewInput, 2);
 
-        var metricGrid = new TableLayoutPanel
+        _connectionDetailsToggleButton.Text = "Show router / line details";
+        _connectionDetailsToggleButton.Dock = DockStyle.Fill;
+        _connectionDetailsToggleButton.Margin = new Padding(6, 0, 0, 1);
+        _connectionDetailsToggleButton.Click += (_, _) =>
         {
-            Dock = DockStyle.Fill,
-            ColumnCount = 4,
-            RowCount = 4
+            _connectionDetailsExpanded = !_connectionDetailsExpanded;
+            _routerMetricGrid.Visible = _connectionDetailsExpanded;
+            if (_dashboardConnectionRowStyle is not null)
+                _dashboardConnectionRowStyle.Height =
+                    _connectionDetailsExpanded ? 220 : 74;
+            _connectionDetailsToggleButton.Text = _connectionDetailsExpanded
+                ? "Hide router / line details"
+                : "Show router / line details";
         };
-        for (int column = 0; column < 4; column++)
-            metricGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
-        for (int row = 0; row < 4; row++)
-            metricGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 25));
+        selectors.Controls.Add(_connectionDetailsToggleButton, 2, 0);
 
-        AddRouterMetric(metricGrid, 0, 0, "ROUTER STATUS", "Status");
-        AddRouterMetric(metricGrid, 1, 0, "ISP", "Isp");
-        AddRouterMetric(metricGrid, 2, 0, "NETWORK TYPE", "Network");
-        AddRouterMetric(metricGrid, 3, 0, "LTE BAND", "Band");
-        AddRouterMetric(metricGrid, 0, 1, "SIGNAL", "Signal");
-        AddRouterMetric(metricGrid, 1, 1, "RSRP", "Rsrp");
-        AddRouterMetric(metricGrid, 2, 1, "RSRQ", "Rsrq");
-        AddRouterMetric(metricGrid, 3, 1, "SNR", "Snr");
-        AddRouterMetric(metricGrid, 0, 2, "PCI", "Pci");
-        AddRouterMetric(metricGrid, 1, 2, "CELL ID", "Cell");
-        AddRouterMetric(metricGrid, 2, 2, "EARFCN", "Earfcn");
-        AddRouterMetric(metricGrid, 3, 2, "SIM STATUS", "Sim");
-        AddRouterMetric(metricGrid, 0, 3, "DATA USED", "Data");
-        AddRouterMetric(metricGrid, 1, 3, "ROUTER UPLOAD", "RouterUpload");
-        AddRouterMetric(metricGrid, 2, 3, "ROUTER DOWNLOAD", "RouterDownload");
-        AddRouterMetric(metricGrid, 3, 3, "LAST UPDATE", "Updated");
-
-        var controls = new FlowLayoutPanel
+        var actions = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
-            Padding = new Padding(5, 9, 5, 4)
+            Margin = new Padding(6, 1, 0, 0),
+            Padding = Padding.Empty
         };
         var configureButton = new Button
         {
-            Text = "Configure TP-Link router",
-            Size = new Size(190, 38)
+            Text = "Configure router",
+            Size = new Size(118, 28),
+            Margin = new Padding(0)
         };
         configureButton.Click += async (_, _) =>
             await ConfigureRouterAsync(firstRun: false);
         var refreshButton = new Button
         {
-            Text = "Reconnect now",
-            Size = new Size(145, 38)
+            Text = "Reconnect",
+            Size = new Size(94, 28),
+            Margin = new Padding(4, 0, 0, 0)
         };
         refreshButton.Click += async (_, _) =>
         {
@@ -922,32 +929,73 @@ internal sealed class MainForm : Form
                 refreshButton.Enabled = true;
             }
         };
-        var privacyLabel = new Label
+        var rebootButton = new Button
         {
-            Text = "One-second telemetry • router changes require explicit opt-in • identifiers stay local except confirmed ISP export",
-            AutoSize = true,
-            ForeColor = Color.DimGray,
-            Margin = new Padding(14, 11, 0, 0)
+            Text = "Restart router",
+            Size = new Size(108, 28),
+            Margin = new Padding(4, 0, 0, 0)
         };
-        controls.Controls.Add(configureButton);
-        controls.Controls.Add(refreshButton);
-        var rebootButton = new Button { Text = "Restart router", Size = new Size(145, 38) };
         rebootButton.Click += async (_, _) =>
         {
-            if (MessageBox.Show("Restart the TP-Link router now? Internet access will be unavailable for several minutes.", "Restart router", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+            if (MessageBox.Show(
+                    "Restart the TP-Link router now? Internet access will be unavailable for several minutes.",
+                    "Restart router",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning) != DialogResult.Yes)
+                return;
             rebootButton.Enabled = false;
-            try { await _routerMonitor.RebootRouterAsync(); }
-            catch (Exception ex) { MessageBox.Show(ex.Message, "Restart router", MessageBoxButtons.OK, MessageBoxIcon.Error); }
-            finally { rebootButton.Enabled = true; }
+            try
+            {
+                await _routerMonitor.RebootRouterAsync();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "Restart router",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                rebootButton.Enabled = true;
+            }
         };
-        controls.Controls.Add(rebootButton);
-        controls.Controls.Add(privacyLabel);
+        actions.Controls.Add(configureButton);
+        actions.Controls.Add(refreshButton);
+        actions.Controls.Add(rebootButton);
+        selectors.Controls.Add(actions, 2, 1);
+        statusPanel.Controls.Add(selectors, 2, 0);
+
+        _routerMetricGrid.Dock = DockStyle.Fill;
+        _routerMetricGrid.ColumnCount = 8;
+        _routerMetricGrid.RowCount = 2;
+        _routerMetricGrid.Margin = Padding.Empty;
+        for (int column = 0; column < 8; column++)
+            _routerMetricGrid.ColumnStyles.Add(
+                new ColumnStyle(SizeType.Percent, 12.5F));
+        for (int row = 0; row < 2; row++)
+            _routerMetricGrid.RowStyles.Add(
+                new RowStyle(SizeType.Percent, 50F));
+
+        AddRouterMetric(_routerMetricGrid, 0, 0, "ROUTER STATUS", "Status");
+        AddRouterMetric(_routerMetricGrid, 1, 0, "ISP", "Isp");
+        AddRouterMetric(_routerMetricGrid, 2, 0, "NETWORK TYPE", "Network");
+        AddRouterMetric(_routerMetricGrid, 3, 0, "LTE BAND", "Band");
+        AddRouterMetric(_routerMetricGrid, 4, 0, "SIGNAL", "Signal");
+        AddRouterMetric(_routerMetricGrid, 5, 0, "RSRP", "Rsrp");
+        AddRouterMetric(_routerMetricGrid, 6, 0, "RSRQ", "Rsrq");
+        AddRouterMetric(_routerMetricGrid, 7, 0, "SNR", "Snr");
+        AddRouterMetric(_routerMetricGrid, 0, 1, "PCI", "Pci");
+        AddRouterMetric(_routerMetricGrid, 1, 1, "CELL ID", "Cell");
+        AddRouterMetric(_routerMetricGrid, 2, 1, "EARFCN", "Earfcn");
+        AddRouterMetric(_routerMetricGrid, 3, 1, "SIM STATUS", "Sim");
+        AddRouterMetric(_routerMetricGrid, 4, 1, "DATA USED", "Data");
+        AddRouterMetric(_routerMetricGrid, 5, 1, "ROUTER UPLOAD", "RouterUpload");
+        AddRouterMetric(_routerMetricGrid, 6, 1, "ROUTER DOWNLOAD", "RouterDownload");
+        AddRouterMetric(_routerMetricGrid, 7, 1, "LAST UPDATE", "Updated");
+        _routerMetricGrid.Visible = false;
 
         layout.Controls.Add(statusPanel, 0, 0);
-        layout.Controls.Add(metricGrid, 0, 1);
-        layout.Controls.Add(controls, 0, 2);
-        page.Controls.Add(layout);
-        return page;
+        layout.Controls.Add(_routerMetricGrid, 0, 1);
+        return layout;
     }
 
     private TabPage BuildLteHistoryTab()
@@ -2366,6 +2414,7 @@ internal sealed class MainForm : Form
         };
         _routerMetrics[key] = valueLabel;
         _routerMetricCaptions[key] = captionLabel;
+        _routerMetricCards[key] = card;
         card.Controls.Add(captionLabel);
         card.Controls.Add(valueLabel);
         card.Layout += (_, _) =>
@@ -2462,6 +2511,7 @@ internal sealed class MainForm : Form
             : snapshot.IsOnline ? Color.SeaGreen : Color.Firebrick;
 
         _metrics["CurrentLteSet"].Text = FormatCurrentLteSet(lte);
+        _metrics["AccessType"].Text = GetAccessTechnologyLabel();
         _metrics["CurrentIp"].Text = string.IsNullOrWhiteSpace(_lastPublicIp)
             ? "Checking"
             : _lastPublicIp;
@@ -2523,13 +2573,18 @@ internal sealed class MainForm : Form
         MonitorSnapshot snapshot,
         RouterTelemetry lte)
     {
-        string fingerprint = string.Join(
-            "|",
-            NormalizeConnectionIdentity(lte.Band),
-            NormalizeConnectionIdentity(lte.CellId),
-            NormalizeConnectionIdentity(lte.Earfcn),
-            NormalizeConnectionIdentity(lte.Pci),
-            NormalizeConnectionIdentity(_lastPublicIp));
+        string fingerprint = IsLteConnectionView()
+            ? string.Join(
+                "|",
+                NormalizeConnectionIdentity(lte.Band),
+                NormalizeConnectionIdentity(lte.CellId),
+                NormalizeConnectionIdentity(lte.Earfcn),
+                NormalizeConnectionIdentity(lte.Pci),
+                NormalizeConnectionIdentity(_lastPublicIp))
+            : string.Join(
+                "|",
+                NormalizeConnectionIdentity(GetAccessTechnologyLabel()),
+                NormalizeConnectionIdentity(_lastPublicIp));
 
         if (_trackedConnectionFingerprint.Length == 0)
         {
@@ -2620,45 +2675,50 @@ internal sealed class MainForm : Form
             $"EARFCN {DisplayValue(lte.Earfcn)}, PCI {DisplayValue(lte.Pci)}. " +
             "This identity is not a quality score.");
         SetDashboardMetricQuality(
+            "AccessType", null,
+            "Selected access technology. General Internet measurements remain available for LTE, ADSL/VDSL and FTTB/FTTH.");
+        SetDashboardMetricQuality(
             "CurrentIp", null,
             "Current public IP observed by NetPulse. It refreshes automatically and changes independently of LTE RF quality.");
         SetDashboardMetricQuality(
             "ConnectionStable", null,
-            "Elapsed time since the last change to this exact connection identity: " +
-            $"Band {DisplayValue(lte.Band)}, CID {DisplayValue(lte.CellId)}, " +
-            $"EARFCN {DisplayValue(lte.Earfcn)}, PCI {DisplayValue(lte.Pci)}, " +
-            $"public IP {(string.IsNullOrWhiteSpace(_lastPublicIp) ? "pending" : _lastPublicIp)}. " +
-            "It resets only when one of these LTE identity/IP values changes. " +
+            (IsLteConnectionView()
+                ? "Elapsed time since the last LTE set, PCell identity or public-IP change: " +
+                  $"Band {DisplayValue(lte.Band)}, CID {DisplayValue(lte.CellId)}, " +
+                  $"EARFCN {DisplayValue(lte.Earfcn)}, PCI {DisplayValue(lte.Pci)}, " +
+                  $"public IP {(string.IsNullOrWhiteSpace(_lastPublicIp) ? "pending" : _lastPublicIp)}. "
+                : $"Elapsed time since the selected {GetAccessTechnologyLabel()} access profile or public IP last changed. ") +
+            "It resets only when that connection identity changes. " +
             "Ping failures, outages and online/offline detection do not reset it; it is independent of RUN TIME.");
         SetDashboardMetricQuality(
             "ConnectionOutages", hasSamples
                 ? ScoreLowerIsBetter(currentConnectionOutageRate, 0, 0.25, 1, 3)
                 : null,
-            "Confirmed outages while this exact band set, CID/EARFCN/PCI and public IP have remained unchanged. " +
+            "Confirmed outages while the current access identity and public IP have remained unchanged. " +
             "An outage increments this value but does not reset it or the connection timer. " +
-            "The value resets only when one of those LTE identity/IP fields changes.");
+            "The value resets only when that access identity or public IP changes.");
         SetDashboardMetricQuality(
             "Ping", hasSamples ? currentPingQuality : null,
-            "Current ping sample: 0–40 ms excellent, 41–80 ms good, 81–150 ms weak, and 300+ ms critical.");
+            "Measured by this PC to the configured Internet target. Local downloads, Wi-Fi/Ethernet, router queueing and the ISP path all affect it. 0–40 ms excellent, 41–80 ms good, 81–150 ms weak, and 300+ ms critical.");
         SetDashboardMetricQuality(
             "SessionAveragePing", snapshot.AveragePingMs.HasValue
                 ? sessionPingQuality
                 : null,
-            "Average successful ping since the application opened or the session was reset. This is independent of the current ping sample.");
+            "Average successful PC-to-Internet ping since the application opened or the session was reset. Local traffic such as a large download affects it.");
         SetDashboardMetricQuality(
             "SessionAverageJitter", snapshot.SuccessfulPings >= 2
                 ? sessionJitterQuality
                 : null,
-            "Average jitter since the application opened or the session was reset. This is independent of recent-window jitter.");
+            "Average PC-to-Internet jitter since the application opened or the session was reset. It is end-to-end, not an LTE modem RF value.");
         SetDashboardMetricQuality(
             "SessionAverageLoss", hasSamples ? sessionLossQuality : null,
-            "Packet-loss percentage across the complete session since the application opened or the session was reset.");
+            "PC-to-Internet packet-loss percentage across the complete session since the application opened or the session was reset.");
         SetDashboardMetricQuality(
             "Jitter", snapshot.SuccessfulPings >= 2 ? recentJitterQuality : null,
-            "Recent-window jitter: up to 10 ms excellent, 25 ms good, 60 ms weak, and 120+ ms critical.");
+            "Recent PC-to-Internet jitter. Local downloads, Wi-Fi/Ethernet, router queueing and the ISP path all affect it. Up to 10 ms excellent, 25 ms good, 60 ms weak, and 120+ ms critical.");
         SetDashboardMetricQuality(
             "Loss", hasSamples ? recentLossQuality : null,
-            "Recent-window packet loss: 0% excellent, 1% good, 3% weak, and 10% critical.");
+            "Recent PC-to-Internet packet loss. It does not by itself prove an LTE radio failure. 0% excellent, 1% good, 3% weak, and 10% critical.");
         SetDashboardMetricQuality(
             "SuccessFail", hasSamples
                 ? ScoreHigherIsBetter(successPercent, 99.9, 99, 95, 0)
@@ -2682,22 +2742,22 @@ internal sealed class MainForm : Form
             "Download", _lastSpeedResult?.DownloadMbps is double download
                 ? ScoreHigherIsBetter(download, 25, 10, 3, 0)
                 : null,
-            "Last completed download test: 25+ Mbps excellent, 10 Mbps good, 3 Mbps weak, and zero critical.");
+            "Downloaded by this PC from an external server. Local traffic and the complete PC-to-router-to-ISP path affect it. 25+ Mbps excellent, 10 Mbps good, 3 Mbps weak, and zero critical.");
         SetDashboardMetricQuality(
             "Upload", _lastSpeedResult?.UploadMbps is double upload
                 ? ScoreHigherIsBetter(upload, 10, 3, 1, 0)
                 : null,
-            "Last completed upload test: 10+ Mbps excellent, 3 Mbps good, 1 Mbps weak, and zero critical.");
+            "Uploaded by this PC to an external server. Local traffic and the complete PC-to-router-to-ISP path affect it. 10+ Mbps excellent, 3 Mbps good, 1 Mbps weak, and zero critical.");
         SetDashboardMetricQuality(
             "SpeedPing", _lastSpeedResult is not null
                 ? ScoreLowerIsBetter(_lastSpeedResult.LatencyMs, 40, 80, 150, 300)
                 : null,
-            "Latency measured by the last completed speed test.");
+            "Latency measured by this PC during the last completed external speed test.");
         SetDashboardMetricQuality(
             "SpeedLoss", _lastSpeedResult is not null
                 ? ScoreLowerIsBetter(_lastSpeedResult.PacketLossPercent, 0, 1, 3, 10)
                 : null,
-            "Packet loss measured by the last completed speed test.");
+            "Packet loss measured by this PC during the last completed external speed test.");
     }
 
     private void SetDashboardMetricQuality(
@@ -2794,7 +2854,8 @@ internal sealed class MainForm : Form
         ConnectionHealthAssessment health = ConnectionHealthEvaluator.Evaluate(
             snapshot,
             _routerMonitor.GetSnapshot(),
-            _lastDiagnosticResult);
+            _lastDiagnosticResult,
+            includeLteRadio: IsLteConnectionView());
         _healthScore.Text = snapshot.SuccessfulPings + snapshot.FailedPings == 0
             ? "--"
             : health.Score.ToString(CultureInfo.CurrentCulture);
@@ -5470,9 +5531,10 @@ internal sealed class MainForm : Form
             $"Router: {RouterManagementLabel(management)}  •  " +
             $"LTE: {(telemetry.IsConnected ? "registered" : "not registered")}  •  " +
             $"Internet: {(internet.IsOnline ? "online" : "offline")}";
-        _routerDetails.Text = string.IsNullOrWhiteSpace(telemetry.Error)
-            ? versionDetails + "  •  " + pathStates
-            : pathStates + "  •  " + telemetry.Error;
+        _routerDetails.Text = "ROUTER LTE TELEMETRY  •  " +
+            (string.IsNullOrWhiteSpace(telemetry.Error)
+                ? versionDetails + "  •  " + pathStates
+                : pathStates + "  •  " + telemetry.Error);
         if (displayedLock is not null)
             _routerDetails.Text +=
                 $"  •  Cell Lock: CID {displayedLock.CellId}, " +
@@ -5503,6 +5565,9 @@ internal sealed class MainForm : Form
         _routerMetrics["Updated"].Text = telemetry.IsConnected
             ? _clock.FormatTime(telemetry.Timestamp)
             : "";
+        SetRouterMetricTooltip("Status", "Router-management and LTE-registration state read from the router local API.");
+        foreach (string key in new[] { "Isp", "Network", "Band", "Signal", "Rsrp", "Rsrq", "Snr", "Pci", "Cell", "Earfcn", "Sim", "Data", "RouterUpload", "RouterDownload", "Updated" })
+            SetRouterMetricTooltip(key, "Router LTE telemetry read directly from the configured router local API; this is not inferred from PC ping or speed-test traffic.");
     }
 
     private RouterCellLockTarget? GetDisplayedCellLockTarget()
@@ -5576,7 +5641,8 @@ internal sealed class MainForm : Form
             ? Color.DarkOrange
             : snapshot.IsOnline ? Color.SeaGreen : Color.Firebrick;
         _routerDetails.Text =
-            $"{access} internet monitoring. Line values require a compatible router or ONT provider.";
+            $"PC → INTERNET / PC → ROUTER  •  {access} monitoring. " +
+            "Line values require a compatible router or ONT provider.";
 
         _routerMetrics["Status"].Text = status;
         _routerMetrics["Isp"].Text = access;
@@ -5607,10 +5673,16 @@ internal sealed class MainForm : Form
         _routerMetrics["RouterUpload"].Text = DisplayValue(_dnsValue.Text);
         _routerMetrics["RouterDownload"].Text = snapshot.Outages.ToString(CultureInfo.CurrentCulture);
         _routerMetrics["Updated"].Text = FormatDuration(snapshot.TotalDowntime);
+        foreach (string key in _routerMetricCards.Keys)
+            SetRouterMetricTooltip(
+                key,
+                key is "Pci" or "Cell" or "Earfcn" or "Sim"
+                    ? "This line-specific value is unavailable until a compatible router or ONT provider exposes it. NetPulse does not invent it."
+                    : "General PC-to-Internet or PC-to-router measurement for the selected access profile. Local traffic, Wi-Fi/Ethernet and the ISP path may affect it.");
     }
 
     private bool IsLteConnectionView() =>
-        _connectionViewInput.SelectedIndex == 0;
+        _settings.ConnectionDetailsView == "Lte";
 
     private string GetAccessTechnologyLabel() =>
         _settings.ConnectionDetailsView switch
@@ -5625,6 +5697,15 @@ internal sealed class MainForm : Form
     {
         foreach ((string key, string caption) in captions)
             _routerMetricCaptions[key].Text = caption;
+    }
+
+    private void SetRouterMetricTooltip(string key, string text)
+    {
+        if (!_routerMetricCards.TryGetValue(key, out Panel? card))
+            return;
+        _buttonTips.SetToolTip(card, text);
+        foreach (Control child in card.Controls)
+            _buttonTips.SetToolTip(child, text);
     }
 
     private async Task RunSpeedTestAsync(bool manual, string? automaticReason = null)
@@ -6878,15 +6959,25 @@ internal sealed class MainForm : Form
     {
         string layout = _dashboardLayoutInput.SelectedItem?.ToString()
                         ?? _settings.DashboardLayout;
-        bool simple = layout is "LTE Simple" or "Simple";
-        bool lte = layout == "LTE Advanced";
+        bool accessIsLte = IsLteConnectionView();
+        bool simple = accessIsLte && layout is "LTE Simple" or "Simple";
+        bool lte = accessIsLte && layout == "LTE Advanced";
         bool troubleshooting = layout == "ISP troubleshooting";
         _healthCard.Visible = _healthSummaryInput.Checked ||
                               (!IsHandleCreated && _settings.ShowHealthSummary);
-        _smartCard.Visible = (lte || simple) &&
+        _smartCard.Visible = accessIsLte && (lte || simple) &&
                              (_smartRecommendationInput.Checked ||
                               (!IsHandleCreated && _settings.ShowSmartRecommendation));
         _updatesCard.Visible = true;
+        if (_dashboardExperienceGrid.ColumnStyles.Count == 3)
+        {
+            _dashboardExperienceGrid.ColumnStyles[0].Width =
+                _smartCard.Visible ? 27F : 50F;
+            _dashboardExperienceGrid.ColumnStyles[1].Width =
+                _smartCard.Visible ? 42F : 0F;
+            _dashboardExperienceGrid.ColumnStyles[2].Width =
+                _smartCard.Visible ? 31F : 50F;
+        }
 
         ConfigureDashboardMetricGrid(simple);
 
@@ -6897,6 +6988,7 @@ internal sealed class MainForm : Form
 
     private void ConfigureDashboardMetricGrid(bool simple)
     {
+        bool lte = IsLteConnectionView();
         int columns = simple ? 3 : 4;
         const int rows = 8;
 
@@ -6924,17 +7016,19 @@ internal sealed class MainForm : Form
 
             AddDashboardSectionHeader(
                 "CURRENT CONNECTION",
-                "Live values for the active LTE identity and public IP. Recent ping, jitter and packet loss use the current monitoring window.",
+                lte
+                    ? "Router LTE identity plus PC-to-Internet measurements. Hover each value to see its source."
+                    : $"{GetAccessTechnologyLabel()} identity plus PC-to-Internet measurements. Hover each value to see its source.",
                 0,
                 columns);
             AddDashboardSectionHeader(
                 "SESSION SINCE OPEN / RESET",
-                "Averages and totals accumulated since NetPulse opened or Reset session was pressed.",
+                "PC-to-Internet averages and totals accumulated since NetPulse opened or Reset session was pressed.",
                 3,
                 columns);
             AddDashboardSectionHeader(
-                "LAST SPEED TEST",
-                "Results from the latest completed speed test; these are not live traffic throughput values.",
+                "LAST PC SPEED TEST",
+                "External test run by this PC; these results are not router telemetry or live traffic throughput.",
                 6,
                 columns);
 
@@ -6947,7 +7041,7 @@ internal sealed class MainForm : Form
 
             if (simple)
             {
-                Place("CurrentLteSet", 0, 1);
+                Place(lte ? "CurrentLteSet" : "AccessType", 0, 1);
                 Place("CurrentIp", 1, 1);
                 Place("ConnectionStable", 2, 1);
                 Place("Ping", 0, 2);
@@ -6967,7 +7061,7 @@ internal sealed class MainForm : Form
             }
             else
             {
-                Place("CurrentLteSet", 0, 1);
+                Place(lte ? "CurrentLteSet" : "AccessType", 0, 1);
                 Place("CurrentIp", 1, 1);
                 Place("ConnectionStable", 2, 1);
                 Place("ConnectionOutages", 3, 1);

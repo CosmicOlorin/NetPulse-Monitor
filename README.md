@@ -8,7 +8,7 @@ diagnostics and ISP-ready evidence.**
 · [Security policy](.github/SECURITY.md)
 · [Privacy notice](PRIVACY.md)
 
-NetPulse Monitor 1.0.20 is a native .NET 8 WinForms application for continuous
+NetPulse Monitor 1.0.21 is a native .NET 8 WinForms application for continuous
 Windows connection monitoring. It runs as a graphical Windows application and
 does not open a console window during normal use.
 
@@ -42,6 +42,8 @@ endorsed by or supported by TP-Link or any mobile/internet provider.
 - Current ping, jitter, rolling packet loss, successes and failures
 - Confirmed outage detection, recovery events, uptime, downtime and availability
 - Switchable access profiles: Mobile/LTE, ADSL/VDSL and FTTB/FTTH
+- One adaptive Dashboard with the access selector, expandable router/line details
+  and source labels separating PC-to-Internet, PC-to-router and router LTE data
 - Optional capability-based TP-Link router integration, with live LTE telemetry,
   Cell Lock and SIM SMS where the router firmware exposes compatible local APIs
 - LTE signal, RSRP, RSRQ, SNR, PCell/SCell bands, primary EARFCN, SIM, usage and rates
@@ -125,10 +127,21 @@ restoration rather than abandoning an active scan.
 
 ## Access profiles
 
-The **Connection details** tab provides an **Access** selector for Mobile/LTE,
-ADSL/VDSL or FTTB/FTTH. NetPulse does not expose separate Wi-Fi or Ethernet
-profiles because its Internet and LTE monitoring results do not depend on that
-choice.
+The **Dashboard** provides an **Access** selector for Mobile/LTE, ADSL/VDSL or
+FTTB/FTTH. Its expandable router/line section replaces the old separate
+Connection details tab. LTE selection exposes real router RF/cell telemetry and
+the recommendation; DSL/Fiber selection keeps the general Internet session,
+speed, gateway and DNS views while clearly marking line values that require a
+compatible router or ONT provider. NetPulse does not expose separate Wi-Fi or
+Ethernet access profiles because those describe the PC-to-router link rather
+than the ISP access technology.
+
+Measurement sources are explicit. Ping, jitter, loss and speed tests run from
+the Windows PC to an Internet target, so local downloads, Wi-Fi/Ethernet,
+router queueing and the ISP path can all affect them. Gateway latency runs from
+the PC to the router. LTE band, CID, EARFCN, PCI, SINR/SNR, RSRQ, RSRP and router
+traffic rates are read from the compatible router local API. A poor PC-to-
+Internet result is therefore not presented as proof of a poor LTE radio link.
 
 General health, speed-test, gateway, DNS and Windows link values work without
 router credentials. LTE radio values are supplied by the MR600 provider.

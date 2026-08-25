@@ -11,7 +11,8 @@ internal static class ConnectionHealthEvaluator
     public static ConnectionHealthAssessment Evaluate(
         MonitorSnapshot monitor,
         RouterTelemetry router,
-        DiagnosticResult? diagnostics)
+        DiagnosticResult? diagnostics,
+        bool includeLteRadio = true)
     {
         if (!monitor.IsOnline)
         {
@@ -78,17 +79,17 @@ internal static class ConnectionHealthEvaluator
             factors.Add($"Availability is below 99% ({monitor.AvailabilityPercent:0.###}%)");
         }
 
-        if (router.IsConnected && router.RsrpDbm is <= -110)
+        if (includeLteRadio && router.IsConnected && router.RsrpDbm is <= -110)
         {
             score -= 10;
             factors.Add($"Weak LTE reference signal ({router.RsrpDbm:0.#} dBm RSRP)");
         }
-        if (router.IsConnected && router.RsrqDb is <= -15)
+        if (includeLteRadio && router.IsConnected && router.RsrqDb is <= -15)
         {
             score -= 8;
             factors.Add($"Poor LTE signal quality ({router.RsrqDb:0.#} dB RSRQ)");
         }
-        if (router.IsConnected && router.SnrDb is < 3)
+        if (includeLteRadio && router.IsConnected && router.SnrDb is < 3)
         {
             score -= 8;
             factors.Add($"Low LTE signal-to-noise ratio ({router.SnrDb:0.#} dB)");
