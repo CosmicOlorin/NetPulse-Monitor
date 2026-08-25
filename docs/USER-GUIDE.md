@@ -9,7 +9,7 @@ score explains the strongest measured factor; it is a diagnostic summary, not a
 provider service guarantee.
 
 **Smart LTE recommendation** shows the best eligible profile for the selected
-location's current time period. **Apply safely...** uses the same confirmation,
+location's current time period. **Apply safely** uses the same confirmation,
 connectivity validation and rollback as LTE History. **Test current** records a
 new comparable 20 MB download / 5 MB upload result without changing the router.
 
