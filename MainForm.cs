@@ -133,7 +133,7 @@ internal sealed class MainForm : Form
     private readonly Label _dnsValue = new();
     private readonly Label _ipv4Value = new();
     private readonly Label _ipv6Value = new();
-    private readonly AutoFitLabel _diagnosticsSummary = new();
+    private readonly Label _diagnosticsSummary = new();
 
     private CancellationTokenSource? _speedCancellation;
     private CancellationTokenSource? _smsSendCancellation;
@@ -483,7 +483,7 @@ internal sealed class MainForm : Form
         };
 
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 115));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 270));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 365));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
 
@@ -507,43 +507,45 @@ internal sealed class MainForm : Form
 
         _dashboardMetricGrid.Dock = DockStyle.Fill;
         _dashboardMetricGrid.ColumnCount = 4;
-        _dashboardMetricGrid.RowCount = 5;
+        _dashboardMetricGrid.RowCount = 8;
         for (int column = 0; column < 4; column++)
             _dashboardMetricGrid.ColumnStyles.Add(
                 new ColumnStyle(SizeType.Percent, 25F));
-        for (int row = 0; row < 5; row++)
+        for (int row = 0; row < 8; row++)
             _dashboardMetricGrid.RowStyles.Add(
-                new RowStyle(SizeType.Percent, 20F));
+                new RowStyle(SizeType.Percent, 12.5F));
         AddMetric(_dashboardMetricGrid, 0, 0, "CURRENT LTE SET / CELL", "CurrentLteSet");
         AddMetric(_dashboardMetricGrid, 1, 0, "CURRENT PUBLIC IP", "CurrentIp");
         AddMetric(_dashboardMetricGrid, 2, 0, "CURRENT PING", "Ping");
-        AddMetric(_dashboardMetricGrid, 3, 0, "SESSION AVERAGES", "SessionAverage");
+        AddMetric(_dashboardMetricGrid, 3, 0, "SESSION AVG PING", "SessionAveragePing");
 
         AddMetric(_dashboardMetricGrid, 0, 1, "RECENT JITTER", "Jitter");
         AddMetric(_dashboardMetricGrid, 1, 1, "RECENT PACKET LOSS", "Loss");
-        AddMetric(_dashboardMetricGrid, 2, 1, "SESSION SUCCESS / FAIL", "SuccessFail");
-        AddMetric(_dashboardMetricGrid, 3, 1, "RUN TIME", "RunTime");
+        AddMetric(_dashboardMetricGrid, 2, 1, "SESSION FAILURES", "SuccessFail");
+        AddMetric(_dashboardMetricGrid, 3, 1, "SESSION AVG JITTER", "SessionAverageJitter");
 
         AddMetric(_dashboardMetricGrid, 0, 2, "TOTAL DOWNTIME", "Downtime");
         AddMetric(_dashboardMetricGrid, 1, 2, "SESSION AVAILABILITY", "Availability");
         AddMetric(_dashboardMetricGrid, 2, 2, "SESSION OUTAGES", "Outages");
-        AddMetric(_dashboardMetricGrid, 3, 2, "LAST DOWNLOAD TEST", "Download");
+        AddMetric(_dashboardMetricGrid, 3, 2, "SESSION AVG LOSS", "SessionAverageLoss");
 
-        AddMetric(_dashboardMetricGrid, 0, 3, "LAST UPLOAD TEST", "Upload");
-        AddMetric(_dashboardMetricGrid, 1, 3, "SPEEDTEST PING", "SpeedPing");
-        AddMetric(_dashboardMetricGrid, 2, 3, "SPEEDTEST LOSS", "SpeedLoss");
-        AddMetric(
-            _dashboardMetricGrid,
-            3,
-            3,
-            "CURRENT CONNECTION + SET + IP TIME",
-            "ConnectionStable");
+        AddMetric(_dashboardMetricGrid, 0, 3, "LAST DOWNLOAD TEST", "Download");
+        AddMetric(_dashboardMetricGrid, 1, 3, "LAST UPLOAD TEST", "Upload");
+        AddMetric(_dashboardMetricGrid, 2, 3, "SPEEDTEST PING", "SpeedPing");
+        AddMetric(_dashboardMetricGrid, 3, 3, "SPEEDTEST LOSS", "SpeedLoss");
         AddMetric(
             _dashboardMetricGrid,
             0,
             4,
+            "CURRENT CONNECTION + SET + IP TIME",
+            "ConnectionStable");
+        AddMetric(
+            _dashboardMetricGrid,
+            1,
+            4,
             "CURRENT CONNECTION OUTAGES",
             "ConnectionOutages");
+        AddMetric(_dashboardMetricGrid, 2, 4, "RUN TIME", "RunTime");
         ConfigureDashboardMetricGrid(simple: false);
 
         _chart.Dock = DockStyle.Fill;
@@ -559,12 +561,12 @@ internal sealed class MainForm : Form
             Margin = new Padding(4, 5, 4, 1),
             Padding = new Padding(12, 4, 12, 4)
         };
-        diagnosticsStrip.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        diagnosticsStrip.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 175));
         diagnosticsStrip.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         diagnosticsStrip.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         diagnosticsStrip.Controls.Add(new Label
         {
-            Text = "LOCAL PATH",
+            Text = "LOCAL NETWORK CHECKS",
             Dock = DockStyle.Fill,
             ForeColor = Color.DimGray,
             Font = new Font("Segoe UI", 8.5F),
@@ -572,9 +574,13 @@ internal sealed class MainForm : Form
         }, 0, 0);
         _diagnosticsSummary.Text = "Measuring gateway, DNS and IP availability…";
         _diagnosticsSummary.Dock = DockStyle.Fill;
-        _diagnosticsSummary.MaximumFontSize = 10F;
         _diagnosticsSummary.TextAlign = ContentAlignment.MiddleLeft;
+        _diagnosticsSummary.AutoEllipsis = true;
+        _diagnosticsSummary.Font = new Font("Segoe UI", 8.5F);
         _diagnosticsSummary.Padding = new Padding(2, 0, 4, 0);
+        _buttonTips.SetToolTip(
+            _diagnosticsSummary,
+            "Local network checks show the router gateway address and response time, DNS response time, and local IPv4/IPv6 availability. They do not describe an LTE band path.");
         diagnosticsStrip.Controls.Add(_diagnosticsSummary, 1, 0);
 
         var chartArea = new TableLayoutPanel
@@ -660,9 +666,21 @@ internal sealed class MainForm : Form
     private void ConfigureHealthCard()
     {
         ConfigureExperienceCard(_healthCard, "CONNECTION HEALTH");
-        _healthScore.Dock = DockStyle.Left;
-        _healthScore.Width = 92;
-        _healthScore.Font = new Font("Segoe UI", 25F, FontStyle.Bold);
+        var content = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty
+        };
+        content.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 108));
+        content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        content.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        _healthScore.Dock = DockStyle.Fill;
+        _healthScore.AutoSize = false;
+        _healthScore.AutoEllipsis = false;
+        _healthScore.Font = new Font("Segoe UI", 23F, FontStyle.Bold);
         _healthScore.TextAlign = ContentAlignment.MiddleCenter;
         _healthScore.Text = "--";
         _healthSummary.Dock = DockStyle.Fill;
@@ -670,8 +688,9 @@ internal sealed class MainForm : Form
         _healthSummary.TextAlign = ContentAlignment.MiddleLeft;
         _healthSummary.Padding = new Padding(8, 0, 2, 0);
         _healthSummary.Text = "Waiting for measurements";
-        _healthCard.Controls.Add(_healthSummary);
-        _healthCard.Controls.Add(_healthScore);
+        content.Controls.Add(_healthScore, 0, 0);
+        content.Controls.Add(_healthSummary, 1, 0);
+        _healthCard.Controls.Add(content);
     }
 
     private void ConfigureSmartCard()
@@ -2460,8 +2479,13 @@ internal sealed class MainForm : Form
         _metrics["Loss"].Text = hasSamples
             ? snapshot.PacketLossPercent.ToString("0.#") + "%"
             : "";
-        _metrics["SuccessFail"].Text =
-            hasSamples ? snapshot.SuccessfulPings + " / " + snapshot.FailedPings : "";
+        long sessionSamples = snapshot.SuccessfulPings + snapshot.FailedPings;
+        double sessionFailurePercent = sessionSamples > 0
+            ? snapshot.FailedPings * 100D / sessionSamples
+            : 0;
+        _metrics["SuccessFail"].Text = hasSamples
+            ? $"{snapshot.FailedPings} / {sessionFailurePercent:0.#}%"
+            : "";
         _metrics["RunTime"].Text = hasSamples ? FormatDuration(snapshot.RunTime) : "";
         _metrics["Downtime"].Text = snapshot.TotalDowntime > TimeSpan.Zero
             ? FormatDuration(snapshot.TotalDowntime)
@@ -2472,10 +2496,14 @@ internal sealed class MainForm : Form
         _metrics["Outages"].Text = hasSamples
             ? snapshot.Outages.ToString(CultureInfo.CurrentCulture)
             : "";
-        _metrics["SessionAverage"].Text = hasSamples
-            ? $"Ping {FormatOptionalNumber(snapshot.AveragePingMs, "0.#")} ms • " +
-              $"jitter {snapshot.SessionAverageJitterMs:0.#} ms • " +
-              $"loss {snapshot.SessionPacketLossPercent:0.#}%"
+        _metrics["SessionAveragePing"].Text = hasSamples
+            ? FormatOptionalNumber(snapshot.AveragePingMs, "0.#") + " ms"
+            : "";
+        _metrics["SessionAverageJitter"].Text = snapshot.SuccessfulPings >= 2
+            ? snapshot.SessionAverageJitterMs.ToString("0.#") + " ms"
+            : "";
+        _metrics["SessionAverageLoss"].Text = hasSamples
+            ? snapshot.SessionPacketLossPercent.ToString("0.#") + "%"
             : "";
 
         RefreshDashboardMetricQuality(
@@ -2570,8 +2598,6 @@ internal sealed class MainForm : Form
             snapshot.SessionAverageJitterMs, 10, 25, 60, 120);
         double sessionLossQuality = ScoreLowerIsBetter(
             snapshot.SessionPacketLossPercent, 0, 1, 3, 10);
-        double sessionQuality =
-            (sessionPingQuality + sessionJitterQuality + sessionLossQuality) / 3D;
         long samples = snapshot.SuccessfulPings + snapshot.FailedPings;
         double successPercent = samples > 0
             ? snapshot.SuccessfulPings * 100D / samples
@@ -2615,8 +2641,18 @@ internal sealed class MainForm : Form
             "Ping", hasSamples ? currentPingQuality : null,
             "Current ping sample: 0–40 ms excellent, 41–80 ms good, 81–150 ms weak, and 300+ ms critical.");
         SetDashboardMetricQuality(
-            "SessionAverage", hasSamples ? sessionQuality : null,
-            "Since-open average of successful ping, jitter and packet loss. This is separate from the current and recent-window boxes.");
+            "SessionAveragePing", snapshot.AveragePingMs.HasValue
+                ? sessionPingQuality
+                : null,
+            "Average successful ping since the application opened or the session was reset. This is independent of the current ping sample.");
+        SetDashboardMetricQuality(
+            "SessionAverageJitter", snapshot.SuccessfulPings >= 2
+                ? sessionJitterQuality
+                : null,
+            "Average jitter since the application opened or the session was reset. This is independent of recent-window jitter.");
+        SetDashboardMetricQuality(
+            "SessionAverageLoss", hasSamples ? sessionLossQuality : null,
+            "Packet-loss percentage across the complete session since the application opened or the session was reset.");
         SetDashboardMetricQuality(
             "Jitter", snapshot.SuccessfulPings >= 2 ? recentJitterQuality : null,
             "Recent-window jitter: up to 10 ms excellent, 25 ms good, 60 ms weak, and 120+ ms critical.");
@@ -2627,7 +2663,7 @@ internal sealed class MainForm : Form
             "SuccessFail", hasSamples
                 ? ScoreHigherIsBetter(successPercent, 99.9, 99, 95, 0)
                 : null,
-            "Successful versus failed ping samples since this session started.");
+            $"Failed ping samples and their percentage of {samples} total session samples since the application opened or the session was reset.");
         SetDashboardMetricQuality(
             "RunTime", null,
             "Elapsed time since the live monitoring session started or was reset; duration itself is not graded.");
@@ -3159,15 +3195,11 @@ internal sealed class MainForm : Form
         if (!LteRecommendationScoring.HasRadioEvidence(item))
             return "RF score unavailable in this official-time period. Signal/SINR, RSRQ and RSRP are required.";
 
-        double sinrScore = LteRecommendationScoring.ScoreSinr(item.AverageSinrDb);
-        double rsrqScore = LteRecommendationScoring.ScoreRsrq(item.AverageRsrqDb);
-        double rsrpScore = LteRecommendationScoring.ScoreRsrp(item.AverageRsrpDbm);
-        return $"RF {item.RadioScore:0.0}/100\r\n" +
-               $"TP-Link signal {FormatOptionalNumber(item.AverageSignalPercent, "0.0")}%\r\n" +
-               $"SNR/SINR {item.AverageSinrDb:0.0} dB → {sinrScore:0.0}/100 × 50% = {sinrScore * 0.50:0.0}\r\n" +
-               $"RSRQ {item.AverageRsrqDb:0.0} dB → {rsrqScore:0.0}/100 × 35% = {rsrqScore * 0.35:0.0}\r\n" +
-               $"Signal power (RSRP) {item.AverageRsrpDbm:0.0} dBm → {rsrpScore:0.0}/100 × 15% = {rsrpScore * 0.15:0.0}\r\n" +
-               "These are current-period radio measurements; RF does not affect Rank.";
+        return $"TP-Link signal {FormatOptionalNumber(item.AverageSignalPercent, "0.0")}%\r\n" +
+               $"SNR/SINR {item.AverageSinrDb:0.0} dB\r\n" +
+               $"RSRQ {item.AverageRsrqDb:0.0} dB\r\n" +
+               $"RSRP {item.AverageRsrpDbm:0.0} dBm\r\n" +
+               "Current-period measured values; RF does not affect Rank.";
     }
 
     private static void ApplyControlledTestGrade(
@@ -6865,22 +6897,8 @@ internal sealed class MainForm : Form
 
     private void ConfigureDashboardMetricGrid(bool simple)
     {
-        string[] keys = simple
-            ? [
-                "CurrentLteSet", "CurrentIp", "ConnectionStable",
-                "ConnectionOutages", "SessionAverage",
-                "Ping", "Loss", "Availability",
-                "Download", "Upload", "SpeedPing"
-            ]
-            : [
-                "CurrentLteSet", "CurrentIp", "ConnectionStable", "Ping",
-                "ConnectionOutages", "SessionAverage", "Jitter", "Loss",
-                "SuccessFail",
-                "RunTime", "Downtime", "Availability", "Outages",
-                "Download", "Upload", "SpeedPing", "SpeedLoss"
-            ];
         int columns = simple ? 3 : 4;
-        int rows = simple ? 4 : 5;
+        const int rows = 8;
 
         _dashboardMetricGrid.SuspendLayout();
         try
@@ -6894,22 +6912,82 @@ internal sealed class MainForm : Form
                 _dashboardMetricGrid.ColumnStyles.Add(
                     new ColumnStyle(SizeType.Percent, 100F / columns));
             for (int row = 0; row < rows; row++)
-                _dashboardMetricGrid.RowStyles.Add(
-                    new RowStyle(SizeType.Percent, 100F / rows));
-
-            for (int index = 0; index < keys.Length; index++)
             {
-                Panel card = _metricCards[keys[index]];
-                card.Visible = true;
-                _dashboardMetricGrid.Controls.Add(
-                    card,
-                    index % columns,
-                    index / columns);
+                bool sectionHeader = row is 0 or 3 or 6;
+                _dashboardMetricGrid.RowStyles.Add(sectionHeader
+                    ? new RowStyle(SizeType.Absolute, 23F)
+                    : new RowStyle(SizeType.Percent, 20F));
             }
-            foreach ((string key, Panel card) in _metricCards)
+
+            foreach (Panel card in _metricCards.Values)
+                card.Visible = false;
+
+            AddDashboardSectionHeader(
+                "CURRENT CONNECTION",
+                "Live values for the active LTE identity and public IP. Recent ping, jitter and packet loss use the current monitoring window.",
+                0,
+                columns);
+            AddDashboardSectionHeader(
+                "SESSION SINCE OPEN / RESET",
+                "Averages and totals accumulated since NetPulse opened or Reset session was pressed.",
+                3,
+                columns);
+            AddDashboardSectionHeader(
+                "LAST SPEED TEST",
+                "Results from the latest completed speed test; these are not live traffic throughput values.",
+                6,
+                columns);
+
+            void Place(string key, int column, int row)
             {
-                if (!keys.Contains(key, StringComparer.Ordinal))
-                    card.Visible = false;
+                Panel card = _metricCards[key];
+                card.Visible = true;
+                _dashboardMetricGrid.Controls.Add(card, column, row);
+            }
+
+            if (simple)
+            {
+                Place("CurrentLteSet", 0, 1);
+                Place("CurrentIp", 1, 1);
+                Place("ConnectionStable", 2, 1);
+                Place("Ping", 0, 2);
+                Place("Loss", 1, 2);
+                Place("ConnectionOutages", 2, 2);
+
+                Place("SessionAveragePing", 0, 4);
+                Place("SessionAverageJitter", 1, 4);
+                Place("SessionAverageLoss", 2, 4);
+                Place("SuccessFail", 0, 5);
+                Place("RunTime", 1, 5);
+                Place("Availability", 2, 5);
+
+                Place("Download", 0, 7);
+                Place("Upload", 1, 7);
+                Place("SpeedPing", 2, 7);
+            }
+            else
+            {
+                Place("CurrentLteSet", 0, 1);
+                Place("CurrentIp", 1, 1);
+                Place("ConnectionStable", 2, 1);
+                Place("ConnectionOutages", 3, 1);
+                Place("Ping", 0, 2);
+                Place("Jitter", 1, 2);
+                Place("Loss", 2, 2);
+
+                Place("SessionAveragePing", 0, 4);
+                Place("SessionAverageJitter", 1, 4);
+                Place("SessionAverageLoss", 2, 4);
+                Place("RunTime", 3, 4);
+                Place("SuccessFail", 0, 5);
+                Place("Downtime", 1, 5);
+                Place("Availability", 2, 5);
+                Place("Outages", 3, 5);
+
+                Place("Download", 0, 7);
+                Place("Upload", 1, 7);
+                Place("SpeedPing", 2, 7);
+                Place("SpeedLoss", 3, 7);
             }
         }
         finally
@@ -7505,15 +7583,20 @@ internal sealed class MainForm : Form
             _ipv4Value.Text = result.IPv4;
             _ipv6Value.Text = result.IPv6;
             _diagnosticsSummary.Text =
-                $"Gateway {CompactDiagnosticValue(result.GatewayPing)}   •   " +
+                $"Gateway {result.Gateway} ({CompactDiagnosticValue(result.GatewayPing)})   •   " +
                 $"DNS {CompactDiagnosticValue(result.DnsLookup)}   •   " +
                 $"IPv4 {FormatAvailability(result.IPv4)}   •   " +
                 $"IPv6 {FormatAvailability(result.IPv6)}   •   updates every 30 s";
+            _buttonTips.SetToolTip(
+                _diagnosticsSummary,
+                $"Local router gateway: {result.Gateway} ({result.GatewayPing}). " +
+                $"DNS lookup: {result.DnsLookup}. IPv4: {result.IPv4}. IPv6: {result.IPv6}. " +
+                "These are local-network reachability checks, not an LTE route trace.");
         }
         catch (Exception ex)
         {
             if (!IsDisposed)
-                _diagnosticsSummary.Text = "Local path temporarily unavailable; retrying automatically.";
+                _diagnosticsSummary.Text = "Local network checks temporarily unavailable; retrying automatically.";
             if (showErrors && !IsDisposed)
             {
                 MessageBox.Show(ex.Message, "Diagnostics",
@@ -7772,6 +7855,30 @@ internal sealed class MainForm : Form
             });
             return false;
         }
+    }
+
+    private void AddDashboardSectionHeader(
+        string text,
+        string tooltip,
+        int row,
+        int columns)
+    {
+        var header = new Label
+        {
+            Text = text,
+            Dock = DockStyle.Fill,
+            AutoSize = false,
+            Margin = new Padding(7, 1, 5, 0),
+            Padding = Padding.Empty,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+            ForeColor = IsDarkThemeActive()
+                ? Color.FromArgb(112, 190, 237)
+                : Color.FromArgb(27, 96, 145)
+        };
+        _buttonTips.SetToolTip(header, tooltip);
+        _dashboardMetricGrid.Controls.Add(header, 0, row);
+        _dashboardMetricGrid.SetColumnSpan(header, columns);
     }
 
     private void RestoreFromTray()
