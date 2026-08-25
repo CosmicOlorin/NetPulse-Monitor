@@ -687,6 +687,7 @@ try
     Require(publicAddressBlocked, "Public router destinations were not blocked.");
     TestCellHistoryRanking();
     TestAutoLockPolicy();
+    TestControlledCandidateGrading();
     TestAutomaticSpeedTests();
     await TestCompanionProtocolAsync();
     TestSettingsMigration();
@@ -1310,11 +1311,16 @@ static void TestAutoLockPolicy()
     LteCellRecommendation poor = RadioRecommendation(-3, -18, -112);
     LteCellRecommendation[] candidates = [excellent, good, poor];
     LteRecommendationScoring.AssignScores(candidates);
-    Require(excellent.WeightedScore > good.WeightedScore &&
-            good.WeightedScore > poor.WeightedScore,
-        "LTE ranking must use 50% SINR, 35% RSRQ and 15% RSRP.");
-    Require(LteAutoLockPolicy.IsMeaningfullyBetter(excellent, good, candidates),
-        "A materially better radio-quality profile should be preferred.");
+    Require(excellent.RadioScore > good.RadioScore &&
+            good.RadioScore > poor.RadioScore &&
+            candidates.All(item => item.WeightedScore == 0 && !item.HasRankingEvidence),
+        "RF must retain its 50% SINR, 35% RSRQ and 15% RSRP score without affecting Rank.");
+    LteCellRecommendation stableFast = RankRecommendation(100, 30, 10);
+    LteCellRecommendation unstableSlow = RankRecommendation(25, 8, 2);
+    LteCellRecommendation[] ranked = [stableFast, unstableSlow];
+    LteRecommendationScoring.AssignScores(ranked);
+    Require(LteAutoLockPolicy.IsMeaningfullyBetter(stableFast, unstableSlow, ranked),
+        "A materially more stable and faster current-period profile should be preferred.");
     Require(LteRecommendationScoring.ScoreSinr(16) >= 90 &&
             LteRecommendationScoring.ScoreSinr(15) >= 90 &&
             LteRecommendationScoring.ScoreRsrq(-7) >= 90 &&
@@ -1353,6 +1359,112 @@ static void TestAutoLockPolicy()
             UsageBasis = "time", Confidence = "High", IsEligible = true,
             AverageSinrDb = sinr, AverageRsrqDb = rsrq,
             AverageRsrpDbm = rsrp
+        };
+
+    static LteCellRecommendation RankRecommendation(
+        double reliability, double download, double upload) => new()
+        {
+            Key = Guid.NewGuid().ToString("N"), Band = "B3",
+            PrimaryBand = "B3", Earfcn = "1300", Pci = "77",
+            CellId = "ABCDE", TimePeriod = "Morning 06–12",
+            UsageBasis = "time", Confidence = "High", IsEligible = true,
+            PeriodControlledTests = 2,
+            PeriodReliabilityScore = reliability,
+            PeriodSpeedTests = 1,
+            AverageDownloadMbps = download,
+            AverageUploadMbps = upload
+        };
+}
+
+static void TestControlledCandidateGrading()
+{
+    string folder = Path.Combine(
+        Path.GetTempPath(),
+        "NetPulseMonitorTests",
+        Guid.NewGuid().ToString("N"));
+    string path = Path.Combine(folder, "controlled-history.json");
+    DateTime testUtc = DateTime.UtcNow;
+    string key;
+    try
+    {
+        using (var history = new LteCellHistoryStore(path, TimeZoneInfo.Utc))
+        {
+            Require(history.AddDiscoveryCandidate("B20 + B3", "6300", "100", "2E3301"),
+                "A complete saved candidate should be available to controlled testing.");
+            key = history.GetRecommendations(testUtc).Single().Key;
+            Require(history.RecordControlledTest(
+                        key,
+                        succeeded: true,
+                        rolledBack: false,
+                        timestamp: testUtc) &&
+                    history.RecordControlledTest(
+                        key,
+                        succeeded: false,
+                        rolledBack: true,
+                        timestamp: testUtc.AddMinutes(1)),
+                "Controlled outcomes should be stored against the exact LTE profile.");
+            LteCellRecommendation graded = history
+                .GetRecommendations(testUtc.AddMinutes(1))
+                .Single();
+            Require(graded.PeriodControlledTests == 2 &&
+                    graded.PeriodControlledFailures == 1 &&
+                    graded.PeriodControlledRollbacks == 1 &&
+                    graded.PeriodFailureRatePercent == 50 &&
+                    graded.PeriodReliabilityScore == 50 &&
+                    graded.HasRankingEvidence &&
+                    Math.Abs(graded.WeightedScore - 25) < 0.01,
+                "Missing speed evidence must score zero, leaving only the 50%-weighted 50% reliability component.");
+            Require(history.GetRecommendations(testUtc.AddHours(6)).Single()
+                        .PeriodControlledTests == 0,
+                "Controlled grades must not leak into a different official-time period.");
+        }
+
+        using (var reloaded = new LteCellHistoryStore(path, TimeZoneInfo.Utc))
+        {
+            LteCellRecommendation persisted = reloaded
+                .GetRecommendations(testUtc.AddMinutes(1))
+                .Single();
+            Require(persisted.PeriodControlledTests == 2 &&
+                    persisted.PeriodControlledRollbacks == 1,
+                "Controlled test and rollback counts must survive application restart.");
+        }
+
+        LteCellRecommendation stable = ControlledRecommendation(100, 30, 10);
+        LteCellRecommendation failing = ControlledRecommendation(0, 30, 10);
+        LteRecommendationScoring.AssignScores([stable, failing]);
+        Require(stable.WeightedScore > failing.WeightedScore,
+            "Controlled reliability must lower Rank when otherwise equal profiles fail and roll back.");
+    }
+    finally
+    {
+        if (Directory.Exists(folder))
+            Directory.Delete(folder, true);
+    }
+
+    static LteCellRecommendation ControlledRecommendation(
+        double reliability,
+        double download,
+        double upload) => new()
+        {
+            Key = Guid.NewGuid().ToString("N"),
+            Band = "B3",
+            PrimaryBand = "B3",
+            Earfcn = "1451",
+            Pci = "100",
+            CellId = "2E3305",
+            TimePeriod = "Afternoon 12–18",
+            UsageBasis = "time",
+            Confidence = "Basic",
+            IsEligible = true,
+            PeriodHasRadioEvidence = true,
+            AverageSinrDb = 10,
+            AverageRsrqDb = -10,
+            AverageRsrpDbm = -92,
+            PeriodControlledTests = 2,
+            PeriodReliabilityScore = reliability,
+            PeriodSpeedTests = 1,
+            AverageDownloadMbps = download,
+            AverageUploadMbps = upload
         };
 }
 
