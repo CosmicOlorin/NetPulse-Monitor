@@ -27,7 +27,10 @@ internal sealed class LteCellRecommendation
     public double? AverageSinrDb { get; init; }
     public double? AverageRsrqDb { get; init; }
     public double? AverageRsrpDbm { get; init; }
+    public double? AverageSignalPercent { get; init; }
+    public double RadioScore { get; set; }
     public double WeightedScore { get; set; }
+    public bool HasRankingEvidence { get; set; }
     public int PeriodId { get; init; }
     public required string TimePeriod { get; init; }
     public TimeSpan PeriodConnectedTime { get; init; }
@@ -36,6 +39,17 @@ internal sealed class LteCellRecommendation
     public double UsageSharePercent { get; init; }
     public required string UsageBasis { get; init; }
     public double TimeEvidenceWeightPercent { get; init; }
+    public int ControlledTests { get; init; }
+    public int ControlledFailures { get; init; }
+    public int ControlledRollbacks { get; init; }
+    public int PeriodControlledTests { get; init; }
+    public int PeriodControlledFailures { get; init; }
+    public int PeriodControlledRollbacks { get; init; }
+    public int PeriodSpeedTests { get; init; }
+    public bool PeriodHasRadioEvidence { get; init; }
+    public double? PeriodFailureRatePercent { get; init; }
+    public double? PeriodReliabilityScore { get; init; }
+    public DateTime? LastControlledTestUtc { get; init; }
     public bool IsEligible { get; init; }
     public bool UserAdded { get; init; }
     public bool DiscoveryCandidate { get; init; }
@@ -44,7 +58,7 @@ internal sealed class LteCellRecommendation
 
 internal sealed class LteCellHistoryStore : IDisposable
 {
-    private const int HistoryFormatVersion = 2;
+    private const int HistoryFormatVersion = 4;
     internal const int MinimumObservationSeconds = 10 * 60;
     internal const int MinimumSpeedTests = 1;
     internal static readonly TimeSpan MinimumVisiblePeriodTime =
@@ -282,6 +296,42 @@ internal sealed class LteCellHistoryStore : IDisposable
         }
     }
 
+    public bool RecordControlledTest(
+        string key,
+        bool succeeded,
+        bool rolledBack,
+        DateTime? timestamp = null)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        DateTime observedUtc = ToUtc(timestamp ?? DateTime.UtcNow);
+        lock (_gate)
+        {
+            LteCellHistoryRecord? record = FindByKey(key);
+            if (record is null)
+                return false;
+            LteTimeBucketRecord period = GetPeriodStats(
+                record,
+                GetTimePeriod(ToOfficialLocal(observedUtc)));
+            record.ControlledTests++;
+            period.ControlledTests++;
+            if (!succeeded)
+            {
+                record.ControlledFailures++;
+                period.ControlledFailures++;
+            }
+            if (rolledBack)
+            {
+                record.ControlledRollbacks++;
+                period.ControlledRollbacks++;
+            }
+            record.LastControlledTestUtc = observedUtc;
+            period.LastControlledTestUtc = observedUtc;
+            MarkDirty();
+            SaveCore(DateTime.UtcNow);
+            return true;
+        }
+    }
+
     public IReadOnlyList<LteCellRecommendation> GetHistoryRecommendations(
         DateTime? timestamp = null)
     {
@@ -349,7 +399,7 @@ internal sealed class LteCellHistoryStore : IDisposable
             .ToArray();
         LteRecommendationScoring.AssignScores(recommendations);
         return recommendations
-            .OrderByDescending(item => item.IsEligible)
+            .OrderByDescending(item => item.HasRankingEvidence)
             .ThenByDescending(item => item.WeightedScore)
             .ThenByDescending(item => item.ConnectedTime)
             .ThenByDescending(item => item.LastSeenUtc)
@@ -852,6 +902,13 @@ internal sealed class LteCellHistoryStore : IDisposable
         LteTimeBucketRecord period,
         RouterTelemetry telemetry)
     {
+        if (telemetry.SignalPercent.HasValue)
+        {
+            record.SignalSamples++;
+            record.SignalTotal += telemetry.SignalPercent.Value;
+            period.SignalSamples++;
+            period.SignalTotal += telemetry.SignalPercent.Value;
+        }
         if (telemetry.RsrpDbm.HasValue)
         {
             record.RsrpSamples++;
@@ -886,38 +943,27 @@ internal sealed class LteCellHistoryStore : IDisposable
             {
                 Period = periodId
             };
-        bool hasRadioEvidence = record.SnrSamples > 0 &&
-                                record.RsrqSamples > 0 &&
-                                record.RsrpSamples > 0;
+        bool hasRadioEvidence = period.SnrSamples > 0 &&
+                                period.RsrqSamples > 0 &&
+                                period.RsrpSamples > 0;
         bool eligible = record.CellId is not null &&
-                        record.ConnectedSeconds >= MinimumObservationSeconds &&
+                        period.ConnectedSeconds >= MinimumObservationSeconds &&
                         hasRadioEvidence;
 
-        double globalDropRate = RatePerHour(
-            record.Disconnections,
-            record.ConnectedSeconds);
         double periodDropRate = period.ConnectedSeconds > 0
             ? RatePerHour(period.Disconnections, period.ConnectedSeconds)
-            : globalDropRate;
+            : 0;
         double evidenceWeight = CalculateTimeEvidenceWeight(period);
-        double weightedDropRate = Blend(globalDropRate, periodDropRate, evidenceWeight);
 
-        double? globalDownload = Average(
-            record.DownloadTotalMbps,
-            record.DownloadSamples);
         double? periodDownload = Average(
             period.DownloadTotalMbps,
             period.DownloadSamples);
-        double? globalUpload = Average(
-            record.UploadTotalMbps,
-            record.UploadSamples);
         double? periodUpload = Average(
             period.UploadTotalMbps,
             period.UploadSamples);
-        double? globalPing = Average(record.PingTotalMs, record.PingSamples);
         double? periodPing = Average(period.PingTotalMs, period.PingSamples);
-        double? averagePing = Blend(globalPing, periodPing, evidenceWeight);
-        double? loadDownload = periodDownload ?? globalDownload;
+        double? averagePing = periodPing;
+        double? loadDownload = periodDownload;
         double? estimatedCellLoad = loadDownload.HasValue && record.BestDownloadMbps > 0
             ? Math.Clamp(
                 100D * (1D - loadDownload.Value / record.BestDownloadMbps),
@@ -941,7 +987,7 @@ internal sealed class LteCellHistoryStore : IDisposable
         }
 
         string confidence = !eligible
-            ? record.ConnectedSeconds < MinimumObservationSeconds
+            ? period.ConnectedSeconds < MinimumObservationSeconds
                 ? "Gathering data"
                 : !hasRadioEvidence
                     ? "Needs SINR/RSRQ/RSRP"
@@ -966,24 +1012,16 @@ internal sealed class LteCellHistoryStore : IDisposable
             Sessions = record.Sessions,
             Handoffs = record.Handoffs,
             Disconnections = record.Disconnections,
-            DisconnectionsPerHour = weightedDropRate,
+            DisconnectionsPerHour = periodDropRate,
             SpeedTests = record.SpeedTests,
-            AverageDownloadMbps = Blend(
-                globalDownload,
-                periodDownload,
-                evidenceWeight),
-            AverageUploadMbps = Blend(
-                globalUpload,
-                periodUpload,
-                evidenceWeight),
+            AverageDownloadMbps = periodDownload,
+            AverageUploadMbps = periodUpload,
             AveragePingMs = averagePing,
             EstimatedCellLoadPercent = estimatedCellLoad,
-            AverageSinrDb = Blend(Average(record.SnrTotal, record.SnrSamples),
-                Average(period.SnrTotal, period.SnrSamples), evidenceWeight),
-            AverageRsrqDb = Blend(Average(record.RsrqTotal, record.RsrqSamples),
-                Average(period.RsrqTotal, period.RsrqSamples), evidenceWeight),
-            AverageRsrpDbm = Blend(Average(record.RsrpTotal, record.RsrpSamples),
-                Average(period.RsrpTotal, period.RsrpSamples), evidenceWeight),
+            AverageSinrDb = Average(period.SnrTotal, period.SnrSamples),
+            AverageRsrqDb = Average(period.RsrqTotal, period.RsrqSamples),
+            AverageRsrpDbm = Average(period.RsrpTotal, period.RsrpSamples),
+            AverageSignalPercent = Average(period.SignalTotal, period.SignalSamples),
             PeriodId = periodId,
             TimePeriod = GetTimePeriodLabel(periodId),
             PeriodConnectedTime = TimeSpan.FromSeconds(period.ConnectedSeconds),
@@ -992,6 +1030,24 @@ internal sealed class LteCellHistoryStore : IDisposable
             UsageSharePercent = usageShare,
             UsageBasis = usageBasis,
             TimeEvidenceWeightPercent = evidenceWeight * 100D,
+            ControlledTests = record.ControlledTests,
+            ControlledFailures = record.ControlledFailures,
+            ControlledRollbacks = record.ControlledRollbacks,
+            PeriodControlledTests = period.ControlledTests,
+            PeriodControlledFailures = period.ControlledFailures,
+            PeriodControlledRollbacks = period.ControlledRollbacks,
+            PeriodSpeedTests = period.SpeedTests,
+            PeriodHasRadioEvidence = hasRadioEvidence,
+            PeriodFailureRatePercent = period.ControlledTests > 0
+                ? 100D * period.ControlledFailures / period.ControlledTests
+                : null,
+            PeriodReliabilityScore = period.ControlledTests > 0
+                ? 100D * (period.ControlledTests - period.ControlledFailures) /
+                  period.ControlledTests
+                : null,
+            LastControlledTestUtc = period.LastControlledTestUtc == default
+                ? null
+                : period.LastControlledTestUtc,
             IsEligible = eligible,
             UserAdded = record.UserAdded,
             DiscoveryCandidate = record.DiscoveryCandidate,
@@ -1380,7 +1436,7 @@ internal sealed class LteCellHistoryStore : IDisposable
         bucket.Samples > 0 || bucket.ConnectedSeconds > 0 ||
         bucket.Sessions > 0 || bucket.TrafficBytes > 0 ||
         bucket.SpeedTests > 0 || bucket.PingSamples > 0 ||
-        bucket.Disconnections > 0;
+        bucket.Disconnections > 0 || bucket.ControlledTests > 0;
 
     private static string CreateRecordKey(LteCellHistoryRecord record) =>
         new CellIdentity(
@@ -1400,6 +1456,12 @@ internal sealed class LteCellHistoryStore : IDisposable
         target.Sessions += source.Sessions;
         target.Handoffs += source.Handoffs;
         target.Disconnections += source.Disconnections;
+        target.ControlledTests += source.ControlledTests;
+        target.ControlledFailures += source.ControlledFailures;
+        target.ControlledRollbacks += source.ControlledRollbacks;
+        target.LastControlledTestUtc = Later(
+            target.LastControlledTestUtc,
+            source.LastControlledTestUtc);
         target.Samples += source.Samples;
         target.TrafficBytes += source.TrafficBytes;
         target.SpeedTests += source.SpeedTests;
@@ -1411,6 +1473,8 @@ internal sealed class LteCellHistoryStore : IDisposable
         target.BestUploadMbps = Math.Max(target.BestUploadMbps, source.BestUploadMbps);
         target.PingSamples += source.PingSamples;
         target.PingTotalMs += source.PingTotalMs;
+        target.SignalSamples += source.SignalSamples;
+        target.SignalTotal += source.SignalTotal;
         target.RsrpSamples += source.RsrpSamples;
         target.RsrpTotal += source.RsrpTotal;
         target.RsrqSamples += source.RsrqSamples;
@@ -1448,6 +1512,20 @@ internal sealed class LteCellHistoryStore : IDisposable
         target.UploadTotalMbps += source.UploadTotalMbps;
         target.PingSamples += source.PingSamples;
         target.PingTotalMs += source.PingTotalMs;
+        target.ControlledTests += source.ControlledTests;
+        target.ControlledFailures += source.ControlledFailures;
+        target.ControlledRollbacks += source.ControlledRollbacks;
+        target.LastControlledTestUtc = Later(
+            target.LastControlledTestUtc,
+            source.LastControlledTestUtc);
+        target.SignalSamples += source.SignalSamples;
+        target.SignalTotal += source.SignalTotal;
+        target.RsrpSamples += source.RsrpSamples;
+        target.RsrpTotal += source.RsrpTotal;
+        target.RsrqSamples += source.RsrqSamples;
+        target.RsrqTotal += source.RsrqTotal;
+        target.SnrSamples += source.SnrSamples;
+        target.SnrTotal += source.SnrTotal;
         return target;
     }
 
@@ -1520,6 +1598,10 @@ internal sealed class LteCellHistoryStore : IDisposable
         public int Sessions { get; set; }
         public int Handoffs { get; set; }
         public int Disconnections { get; set; }
+        public int ControlledTests { get; set; }
+        public int ControlledFailures { get; set; }
+        public int ControlledRollbacks { get; set; }
+        public DateTime LastControlledTestUtc { get; set; }
         public long Samples { get; set; }
         public long TrafficBytes { get; set; }
         public int SpeedTests { get; set; }
@@ -1531,6 +1613,8 @@ internal sealed class LteCellHistoryStore : IDisposable
         public double BestUploadMbps { get; set; }
         public int PingSamples { get; set; }
         public double PingTotalMs { get; set; }
+        public int SignalSamples { get; set; }
+        public double SignalTotal { get; set; }
         public int RsrpSamples { get; set; }
         public double RsrpTotal { get; set; }
         public int RsrqSamples { get; set; }
@@ -1550,6 +1634,10 @@ internal sealed class LteCellHistoryStore : IDisposable
         public int Sessions { get; set; }
         public int Handoffs { get; set; }
         public int Disconnections { get; set; }
+        public int ControlledTests { get; set; }
+        public int ControlledFailures { get; set; }
+        public int ControlledRollbacks { get; set; }
+        public DateTime LastControlledTestUtc { get; set; }
         public long Samples { get; set; }
         public long TrafficBytes { get; set; }
         public int SpeedTests { get; set; }
@@ -1559,6 +1647,8 @@ internal sealed class LteCellHistoryStore : IDisposable
         public double UploadTotalMbps { get; set; }
         public int PingSamples { get; set; }
         public double PingTotalMs { get; set; }
+        public int SignalSamples { get; set; }
+        public double SignalTotal { get; set; }
         public int RsrpSamples { get; set; }
         public double RsrpTotal { get; set; }
         public int RsrqSamples { get; set; }

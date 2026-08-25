@@ -7,8 +7,15 @@ internal static class Program
     {
         if (ApplicationUpdater.TryHandleStartup(args))
             return;
+
+        if (!SingleInstanceCoordinator.TryAcquire(out SingleInstanceCoordinator? singleInstance))
+            return;
+
+        using SingleInstanceCoordinator coordinator = singleInstance!;
         ApplicationConfiguration.Initialize();
         WindowsNotificationIdentity.EnsureRegistered();
-        Application.Run(new MainForm());
+        using var mainForm = new MainForm();
+        coordinator.ActivationRequested += mainForm.RestoreFromExternalLaunch;
+        Application.Run(mainForm);
     }
 }

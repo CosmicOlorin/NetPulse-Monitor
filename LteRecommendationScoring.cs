@@ -5,31 +5,62 @@ internal static class LteRecommendationScoring
     public const double SinrWeight = 0.50;
     public const double RsrqWeight = 0.35;
     public const double RsrpWeight = 0.15;
+    public const double RankReliabilityWeight = 0.50;
+    public const double RankDownloadWeight = 0.25;
+    public const double RankUploadWeight = 0.25;
 
     public static void AssignScores(
         IReadOnlyCollection<LteCellRecommendation> recommendations)
     {
-        LteCellRecommendation[] eligible = recommendations
-            .Where(item => item.IsEligible)
-            .ToArray();
-        if (eligible.Length == 0)
-            return;
+        double maximumDownload = recommendations
+            .Where(item => item.PeriodSpeedTests > 0)
+            .Select(item => item.AverageDownloadMbps ?? 0)
+            .DefaultIfEmpty(0)
+            .Max();
+        double maximumUpload = recommendations
+            .Where(item => item.PeriodSpeedTests > 0)
+            .Select(item => item.AverageUploadMbps ?? 0)
+            .DefaultIfEmpty(0)
+            .Max();
 
-        foreach (LteCellRecommendation item in eligible)
-            item.WeightedScore = CalculateRadioScore(item);
+        foreach (LteCellRecommendation item in recommendations)
+        {
+            bool radioAvailable =
+                (item.PeriodHasRadioEvidence || item.IsEligible) &&
+                HasRadioEvidence(item);
+            item.RadioScore = radioAvailable ? CalculateRadioScore(item) : 0;
+            bool reliabilityAvailable = item.PeriodReliabilityScore.HasValue;
+            bool downloadAvailable = item.PeriodSpeedTests > 0 &&
+                                     item.AverageDownloadMbps.HasValue;
+            bool uploadAvailable = item.PeriodSpeedTests > 0 &&
+                                   item.AverageUploadMbps.HasValue;
+            double reliabilityScore = item.PeriodReliabilityScore ?? 0;
+            double downloadScore = downloadAvailable && maximumDownload > 0
+                ? 100D * item.AverageDownloadMbps!.Value / maximumDownload
+                : 0;
+            double uploadScore = uploadAvailable && maximumUpload > 0
+                ? 100D * item.AverageUploadMbps!.Value / maximumUpload
+                : 0;
+
+            // Rank deliberately excludes RF: RF remains a separate diagnostic
+            // score. The three Rank weights always remain fixed. Missing evidence is a
+            // zero component; it is never hidden by re-normalizing the remaining
+            // weights to 100%.
+            item.WeightedScore =
+                reliabilityScore * RankReliabilityWeight +
+                downloadScore * RankDownloadWeight +
+                uploadScore * RankUploadWeight;
+            item.HasRankingEvidence = reliabilityAvailable || downloadAvailable ||
+                                      uploadAvailable;
+        }
     }
 
     public static double CalculateScore(
         LteCellRecommendation target,
         IReadOnlyCollection<LteCellRecommendation> recommendations)
     {
-        LteCellRecommendation[] eligible = recommendations
-            .Where(item => item.IsEligible)
-            .ToArray();
-        if (!target.IsEligible || eligible.Length == 0)
-            return 0;
-
-        return HasRadioEvidence(target) ? CalculateRadioScore(target) : 0;
+        AssignScores(recommendations);
+        return target.HasRankingEvidence ? target.WeightedScore : 0;
     }
 
     public static double CalculateRadioScore(LteCellRecommendation item) =>

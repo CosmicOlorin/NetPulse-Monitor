@@ -191,6 +191,7 @@ internal sealed class RouterSetupForm : Form
 
         _enabled.CheckedChanged += (_, _) => UpdateEnabledState();
         UpdateEnabledState();
+        InterfaceHelp.Install(this);
         AppThemeManager.Apply(this, theme);
     }
 

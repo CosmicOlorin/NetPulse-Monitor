@@ -19,6 +19,10 @@ internal sealed class MonitorEngine : IDisposable
     private long? _currentPing;
     private long _successful;
     private long _failed;
+    private double _successfulLatencyTotalMs;
+    private long? _lastSuccessfulLatencyMs;
+    private double _sessionJitterTotalMs;
+    private long _sessionJitterTransitions;
     private int _consecutiveFailures;
     private int _outages;
     private bool _isOnline = true;
@@ -82,6 +86,10 @@ internal sealed class MonitorEngine : IDisposable
             _currentPing = null;
             _successful = 0;
             _failed = 0;
+            _successfulLatencyTotalMs = 0;
+            _lastSuccessfulLatencyMs = null;
+            _sessionJitterTotalMs = 0;
+            _sessionJitterTransitions = 0;
             _consecutiveFailures = 0;
             _outages = 0;
             _isOnline = true;
@@ -112,6 +120,16 @@ internal sealed class MonitorEngine : IDisposable
             int totalRecent = recent.Length;
             int failedRecent = recent.Count(x => !x.HasValue);
             double loss = totalRecent == 0 ? 0 : failedRecent * 100.0 / totalRecent;
+            long sessionSamples = _successful + _failed;
+            double sessionLoss = sessionSamples == 0
+                ? 0
+                : _failed * 100D / sessionSamples;
+            double? averagePing = _successful > 0
+                ? _successfulLatencyTotalMs / _successful
+                : null;
+            double sessionJitter = _sessionJitterTransitions > 0
+                ? _sessionJitterTotalMs / _sessionJitterTransitions
+                : 0;
 
             var successfulValues = recent.Where(x => x.HasValue)
                 .Select(x => (double)x!.Value).ToArray();
@@ -131,8 +149,11 @@ internal sealed class MonitorEngine : IDisposable
                 IsOnline = _isOnline,
                 IsPaused = _paused,
                 CurrentPingMs = _currentPing,
+                AveragePingMs = averagePing,
                 JitterMs = jitter,
+                SessionAverageJitterMs = sessionJitter,
                 PacketLossPercent = loss,
+                SessionPacketLossPercent = sessionLoss,
                 SuccessfulPings = _successful,
                 FailedPings = _failed,
                 Outages = _outages,
@@ -215,6 +236,14 @@ internal sealed class MonitorEngine : IDisposable
         {
             _successful++;
             _currentPing = latency;
+            _successfulLatencyTotalMs += latency;
+            if (_lastSuccessfulLatencyMs.HasValue)
+            {
+                _sessionJitterTotalMs += Math.Abs(
+                    latency - _lastSuccessfulLatencyMs.Value);
+                _sessionJitterTransitions++;
+            }
+            _lastSuccessfulLatencyMs = latency;
             _consecutiveFailures = 0;
             AddRecent(latency);
 

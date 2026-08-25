@@ -6,8 +6,11 @@ internal sealed class MonitorSnapshot
     public bool IsOnline { get; init; }
     public bool IsPaused { get; init; }
     public long? CurrentPingMs { get; init; }
+    public double? AveragePingMs { get; init; }
     public double JitterMs { get; init; }
+    public double SessionAverageJitterMs { get; init; }
     public double PacketLossPercent { get; init; }
+    public double SessionPacketLossPercent { get; init; }
     public long SuccessfulPings { get; init; }
     public long FailedPings { get; init; }
     public int Outages { get; init; }

@@ -158,6 +158,7 @@ internal sealed class RegionalSetupForm : Form
             UpdatePreview();
         };
         _timeZone.SelectedIndexChanged += (_, _) => UpdatePreview();
+        InterfaceHelp.Install(this);
         Shown += (_, _) =>
         {
             FitToWorkingArea();

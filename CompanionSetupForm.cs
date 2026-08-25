@@ -147,6 +147,7 @@ internal sealed class CompanionSetupForm : Form
         CancelButton = cancel;
         Controls.Add(root);
         RefreshPairingUri();
+        InterfaceHelp.Install(this);
         AppThemeManager.Apply(this, theme);
     }
 

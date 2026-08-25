@@ -338,7 +338,9 @@ internal static class CellExperimentEvaluator
             .Select(item => new CellExperimentResult(
                 item,
                 item.WeightedScore,
-                $"50% SINR, 35% RSRQ, 15% RSRP; " +
+                $"Rank is 50% controlled reliability, 25% download and " +
+                $"25% upload; missing evidence contributes zero. RF is separate: " +
+                $"50% SINR, 35% RSRQ and 15% RSRP; " +
                 $"SINR {item.AverageSinrDb?.ToString("0.#") ?? "--"} dB, " +
                 $"RSRQ {item.AverageRsrqDb?.ToString("0.#") ?? "--"} dB, " +
                 $"RSRP {item.AverageRsrpDbm?.ToString("0.#") ?? "--"} dBm"))

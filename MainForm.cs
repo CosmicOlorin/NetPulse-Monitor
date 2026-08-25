@@ -145,6 +145,7 @@ internal sealed class MainForm : Form
     private bool _allowExit;
     private DateTime _nextAutomaticSpeedTest;
     private bool _trayHintShown;
+    private volatile bool _externalActivationPending;
     private long _lastCellHistoryRevision = -1;
     private int _lastCellHistoryPeriod = -1;
     private bool _cellLockBusy;
@@ -169,6 +170,9 @@ internal sealed class MainForm : Form
     private int _lastRouterUnreadSmsCount = -1;
     private bool _populatingSmsGrid;
     private string _lastPublicIp = "";
+    private string _trackedConnectionFingerprint = "";
+    private DateTime _currentConnectionSinceUtc = DateTime.UtcNow;
+    private int _currentConnectionOutagesBaseline;
     private string _cellHistorySortColumn = "Rank";
     private bool _cellHistorySortAscending = true;
     private string _observedCellLockFingerprint = "\0";
@@ -209,6 +213,7 @@ internal sealed class MainForm : Form
                ?? SystemIcons.Application;
 
         BuildInterface();
+        InterfaceHelp.Install(this, _buttonTips);
         ConfigureTray();
         LoadSettingsIntoControls();
         ApplyAppearanceSettings();
@@ -234,6 +239,11 @@ internal sealed class MainForm : Form
 
         Shown += async (_, _) =>
         {
+            if (_externalActivationPending)
+            {
+                _externalActivationPending = false;
+                RestoreFromTray();
+            }
             if (!_settings.RegionalSetupCompleted)
                 ConfigureRegionalSettings(firstRun: true);
             if (!_settings.RouterSetupCompleted)
@@ -473,7 +483,7 @@ internal sealed class MainForm : Form
         };
 
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 115));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 198));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 270));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
 
@@ -497,27 +507,43 @@ internal sealed class MainForm : Form
 
         _dashboardMetricGrid.Dock = DockStyle.Fill;
         _dashboardMetricGrid.ColumnCount = 4;
-        _dashboardMetricGrid.RowCount = 3;
+        _dashboardMetricGrid.RowCount = 5;
         for (int column = 0; column < 4; column++)
             _dashboardMetricGrid.ColumnStyles.Add(
                 new ColumnStyle(SizeType.Percent, 25F));
-        for (int row = 0; row < 3; row++)
+        for (int row = 0; row < 5; row++)
             _dashboardMetricGrid.RowStyles.Add(
-                new RowStyle(SizeType.Percent, 100F / 3F));
-        AddMetric(_dashboardMetricGrid, 0, 0, "CURRENT PING", "Ping");
-        AddMetric(_dashboardMetricGrid, 1, 0, "JITTER", "Jitter");
-        AddMetric(_dashboardMetricGrid, 2, 0, "PACKET LOSS", "Loss");
-        AddMetric(_dashboardMetricGrid, 3, 0, "SUCCESS / FAIL", "SuccessFail");
+                new RowStyle(SizeType.Percent, 20F));
+        AddMetric(_dashboardMetricGrid, 0, 0, "CURRENT LTE SET / CELL", "CurrentLteSet");
+        AddMetric(_dashboardMetricGrid, 1, 0, "CURRENT PUBLIC IP", "CurrentIp");
+        AddMetric(_dashboardMetricGrid, 2, 0, "CURRENT PING", "Ping");
+        AddMetric(_dashboardMetricGrid, 3, 0, "SESSION AVERAGES", "SessionAverage");
 
-        AddMetric(_dashboardMetricGrid, 0, 1, "RUN TIME", "RunTime");
-        AddMetric(_dashboardMetricGrid, 1, 1, "TOTAL DOWNTIME", "Downtime");
-        AddMetric(_dashboardMetricGrid, 2, 1, "AVAILABILITY", "Availability");
-        AddMetric(_dashboardMetricGrid, 3, 1, "OUTAGES", "Outages");
+        AddMetric(_dashboardMetricGrid, 0, 1, "RECENT JITTER", "Jitter");
+        AddMetric(_dashboardMetricGrid, 1, 1, "RECENT PACKET LOSS", "Loss");
+        AddMetric(_dashboardMetricGrid, 2, 1, "SESSION SUCCESS / FAIL", "SuccessFail");
+        AddMetric(_dashboardMetricGrid, 3, 1, "RUN TIME", "RunTime");
 
-        AddMetric(_dashboardMetricGrid, 0, 2, "DOWNLOAD", "Download");
-        AddMetric(_dashboardMetricGrid, 1, 2, "UPLOAD", "Upload");
-        AddMetric(_dashboardMetricGrid, 2, 2, "SPEEDTEST PING", "SpeedPing");
-        AddMetric(_dashboardMetricGrid, 3, 2, "SPEEDTEST LOSS", "SpeedLoss");
+        AddMetric(_dashboardMetricGrid, 0, 2, "TOTAL DOWNTIME", "Downtime");
+        AddMetric(_dashboardMetricGrid, 1, 2, "SESSION AVAILABILITY", "Availability");
+        AddMetric(_dashboardMetricGrid, 2, 2, "SESSION OUTAGES", "Outages");
+        AddMetric(_dashboardMetricGrid, 3, 2, "LAST DOWNLOAD TEST", "Download");
+
+        AddMetric(_dashboardMetricGrid, 0, 3, "LAST UPLOAD TEST", "Upload");
+        AddMetric(_dashboardMetricGrid, 1, 3, "SPEEDTEST PING", "SpeedPing");
+        AddMetric(_dashboardMetricGrid, 2, 3, "SPEEDTEST LOSS", "SpeedLoss");
+        AddMetric(
+            _dashboardMetricGrid,
+            3,
+            3,
+            "CURRENT CONNECTION + SET + IP TIME",
+            "ConnectionStable");
+        AddMetric(
+            _dashboardMetricGrid,
+            0,
+            4,
+            "CURRENT CONNECTION OUTAGES",
+            "ConnectionOutages");
         ConfigureDashboardMetricGrid(simple: false);
 
         _chart.Dock = DockStyle.Fill;
@@ -963,6 +989,7 @@ internal sealed class MainForm : Form
         AddCellHistoryColumn("Pci", "PCI", 7);
         AddCellHistoryColumn("Cid", "CID", 11);
         AddCellHistoryColumn("Score", "RF score", 8);
+        AddCellHistoryColumn("TestGrade", "Test / rollback", 12);
         AddCellHistoryColumn("Time", "Seen", 11);
         AddCellHistoryColumn("Ping", "Avg ping", 10);
         AddCellHistoryColumn("Load", "Cell load*", 10);
@@ -1140,17 +1167,8 @@ internal sealed class MainForm : Form
             FillWeight = fillWeight,
             SortMode = DataGridViewColumnSortMode.Programmatic
         };
-        column.HeaderCell.ToolTipText = name switch
-        {
-            "Ping" => "Average successful ping while this LTE profile was active",
-            "Load" => "Estimated congestion from period download versus the best observed download; not direct tower telemetry",
-            "Drops" => "Confirmed disconnections in this period / across all periods",
-            "DropRate" => "Time-weighted confirmed disconnections per connected hour",
-            "Down" => "Time-weighted average speed-test download",
-            "Up" => "Time-weighted average speed-test upload",
-            "Cid" => "Optional; used only when the router reports it",
-            _ => header
-        };
+        column.HeaderCell.ToolTipText =
+            InterfaceHelp.ColumnDescription(name, header);
         _cellHistoryGrid.Columns.Add(column);
     }
 
@@ -2404,7 +2422,13 @@ internal sealed class MainForm : Form
     private void RefreshDashboard()
     {
         MonitorSnapshot snapshot = _engine.GetSnapshot();
+        RouterTelemetry lte = _routerMonitor.GetSnapshot();
         bool hasSamples = snapshot.SuccessfulPings + snapshot.FailedPings > 0;
+
+        UpdateCurrentConnectionIdentity(snapshot, lte);
+        int currentConnectionOutages = Math.Max(
+            0,
+            snapshot.Outages - _currentConnectionOutagesBaseline);
 
         _statusBadge.Text = !hasSamples
             ? "STARTING"
@@ -2418,8 +2442,18 @@ internal sealed class MainForm : Form
             ? Color.DarkOrange
             : snapshot.IsOnline ? Color.SeaGreen : Color.Firebrick;
 
-        _metrics["Ping"].Text =
-            snapshot.CurrentPingMs.HasValue ? snapshot.CurrentPingMs + " ms" : "";
+        _metrics["CurrentLteSet"].Text = FormatCurrentLteSet(lte);
+        _metrics["CurrentIp"].Text = string.IsNullOrWhiteSpace(_lastPublicIp)
+            ? "Checking"
+            : _lastPublicIp;
+        _metrics["ConnectionStable"].Text =
+            FormatDuration(DateTime.UtcNow - _currentConnectionSinceUtc);
+        _metrics["ConnectionOutages"].Text = hasSamples
+            ? currentConnectionOutages.ToString(CultureInfo.CurrentCulture)
+            : "";
+        _metrics["Ping"].Text = snapshot.CurrentPingMs.HasValue
+            ? snapshot.CurrentPingMs + " ms"
+            : hasSamples ? "No reply" : "";
         _metrics["Jitter"].Text = snapshot.SuccessfulPings >= 2
             ? snapshot.JitterMs.ToString("0.#") + " ms"
             : "";
@@ -2431,13 +2465,24 @@ internal sealed class MainForm : Form
         _metrics["RunTime"].Text = hasSamples ? FormatDuration(snapshot.RunTime) : "";
         _metrics["Downtime"].Text = snapshot.TotalDowntime > TimeSpan.Zero
             ? FormatDuration(snapshot.TotalDowntime)
-            : "";
+            : hasSamples ? "0 s" : "";
         _metrics["Availability"].Text = hasSamples
             ? snapshot.AvailabilityPercent.ToString("0.###") + "%"
             : "";
-        _metrics["Outages"].Text = snapshot.Outages > 0
+        _metrics["Outages"].Text = hasSamples
             ? snapshot.Outages.ToString(CultureInfo.CurrentCulture)
             : "";
+        _metrics["SessionAverage"].Text = hasSamples
+            ? $"Ping {FormatOptionalNumber(snapshot.AveragePingMs, "0.#")} ms • " +
+              $"jitter {snapshot.SessionAverageJitterMs:0.#} ms • " +
+              $"loss {snapshot.SessionPacketLossPercent:0.#}%"
+            : "";
+
+        RefreshDashboardMetricQuality(
+            snapshot,
+            lte,
+            hasSamples,
+            currentConnectionOutages);
 
         _footer.Text =
             $"Target: {_settings.PingTarget}   •   " +
@@ -2445,6 +2490,268 @@ internal sealed class MainForm : Form
             $"Logs: {_logger.LogFolder}";
         RefreshExperienceSummary(snapshot);
     }
+
+    private void UpdateCurrentConnectionIdentity(
+        MonitorSnapshot snapshot,
+        RouterTelemetry lte)
+    {
+        string fingerprint = string.Join(
+            "|",
+            NormalizeConnectionIdentity(lte.Band),
+            NormalizeConnectionIdentity(lte.CellId),
+            NormalizeConnectionIdentity(lte.Earfcn),
+            NormalizeConnectionIdentity(lte.Pci),
+            NormalizeConnectionIdentity(_lastPublicIp));
+
+        if (_trackedConnectionFingerprint.Length == 0)
+        {
+            _trackedConnectionFingerprint = fingerprint;
+            _currentConnectionOutagesBaseline = snapshot.Outages;
+            return;
+        }
+
+        if (snapshot.Outages < _currentConnectionOutagesBaseline)
+            _currentConnectionOutagesBaseline = snapshot.Outages;
+
+        if (string.Equals(
+                _trackedConnectionFingerprint,
+                fingerprint,
+                StringComparison.OrdinalIgnoreCase))
+            return;
+
+        _trackedConnectionFingerprint = fingerprint;
+        _currentConnectionSinceUtc = DateTime.UtcNow;
+        _currentConnectionOutagesBaseline = snapshot.Outages;
+    }
+
+    private static string NormalizeConnectionIdentity(string? value)
+    {
+        string normalized = value?.Trim() ?? "";
+        return normalized.Length == 0 || normalized.Equals(
+            "Unknown",
+            StringComparison.OrdinalIgnoreCase)
+            ? "-"
+            : normalized.ToUpperInvariant();
+    }
+
+    private static string FormatCurrentLteSet(RouterTelemetry telemetry)
+    {
+        if (!telemetry.IsConnected || string.IsNullOrWhiteSpace(telemetry.Band) ||
+            telemetry.Band is "-" or "Unknown")
+            return "Not registered";
+        string cell = IsKnownRadioIdentity(telemetry.CellId)
+            ? $" • CID {telemetry.CellId}"
+            : "";
+        return telemetry.Band + cell;
+    }
+
+    private static string FormatOptionalNumber(double? value, string format) =>
+        value.HasValue
+            ? value.Value.ToString(format, CultureInfo.CurrentCulture)
+            : "-";
+
+    private void RefreshDashboardMetricQuality(
+        MonitorSnapshot snapshot,
+        RouterTelemetry lte,
+        bool hasSamples,
+        int currentConnectionOutages)
+    {
+        double? currentPingQuality = snapshot.CurrentPingMs.HasValue
+            ? ScoreLowerIsBetter(snapshot.CurrentPingMs.Value, 40, 80, 150, 300)
+            : hasSamples ? 0 : null;
+        double recentJitterQuality = ScoreLowerIsBetter(
+            snapshot.JitterMs, 10, 25, 60, 120);
+        double recentLossQuality = ScoreLowerIsBetter(
+            snapshot.PacketLossPercent, 0, 1, 3, 10);
+        double sessionPingQuality = snapshot.AveragePingMs.HasValue
+            ? ScoreLowerIsBetter(snapshot.AveragePingMs.Value, 40, 80, 150, 300)
+            : 0;
+        double sessionJitterQuality = ScoreLowerIsBetter(
+            snapshot.SessionAverageJitterMs, 10, 25, 60, 120);
+        double sessionLossQuality = ScoreLowerIsBetter(
+            snapshot.SessionPacketLossPercent, 0, 1, 3, 10);
+        double sessionQuality =
+            (sessionPingQuality + sessionJitterQuality + sessionLossQuality) / 3D;
+        long samples = snapshot.SuccessfulPings + snapshot.FailedPings;
+        double successPercent = samples > 0
+            ? snapshot.SuccessfulPings * 100D / samples
+            : 0;
+        double availabilityQuality = ScoreHigherIsBetter(
+            snapshot.AvailabilityPercent, 99.9, 99, 95, 0);
+        double outageRate = snapshot.RunTime.TotalHours > 0
+            ? snapshot.Outages / Math.Max(snapshot.RunTime.TotalHours, 1D / 60D)
+            : 0;
+        double currentConnectionHours = Math.Max(
+            (DateTime.UtcNow - _currentConnectionSinceUtc).TotalHours,
+            1D / 60D);
+        double currentConnectionOutageRate =
+            currentConnectionOutages / currentConnectionHours;
+
+        SetDashboardMetricQuality(
+            "CurrentLteSet", null,
+            $"Current ordered LTE serving set and PCell identity: " +
+            $"Band {DisplayValue(lte.Band)}, CID {DisplayValue(lte.CellId)}, " +
+            $"EARFCN {DisplayValue(lte.Earfcn)}, PCI {DisplayValue(lte.Pci)}. " +
+            "This identity is not a quality score.");
+        SetDashboardMetricQuality(
+            "CurrentIp", null,
+            "Current public IP observed by NetPulse. It refreshes automatically and changes independently of LTE RF quality.");
+        SetDashboardMetricQuality(
+            "ConnectionStable", null,
+            "Elapsed time since the last change to this exact connection identity: " +
+            $"Band {DisplayValue(lte.Band)}, CID {DisplayValue(lte.CellId)}, " +
+            $"EARFCN {DisplayValue(lte.Earfcn)}, PCI {DisplayValue(lte.Pci)}, " +
+            $"public IP {(string.IsNullOrWhiteSpace(_lastPublicIp) ? "pending" : _lastPublicIp)}. " +
+            "It resets only when one of these LTE identity/IP values changes. " +
+            "Ping failures, outages and online/offline detection do not reset it; it is independent of RUN TIME.");
+        SetDashboardMetricQuality(
+            "ConnectionOutages", hasSamples
+                ? ScoreLowerIsBetter(currentConnectionOutageRate, 0, 0.25, 1, 3)
+                : null,
+            "Confirmed outages while this exact band set, CID/EARFCN/PCI and public IP have remained unchanged. " +
+            "An outage increments this value but does not reset it or the connection timer. " +
+            "The value resets only when one of those LTE identity/IP fields changes.");
+        SetDashboardMetricQuality(
+            "Ping", hasSamples ? currentPingQuality : null,
+            "Current ping sample: 0–40 ms excellent, 41–80 ms good, 81–150 ms weak, and 300+ ms critical.");
+        SetDashboardMetricQuality(
+            "SessionAverage", hasSamples ? sessionQuality : null,
+            "Since-open average of successful ping, jitter and packet loss. This is separate from the current and recent-window boxes.");
+        SetDashboardMetricQuality(
+            "Jitter", snapshot.SuccessfulPings >= 2 ? recentJitterQuality : null,
+            "Recent-window jitter: up to 10 ms excellent, 25 ms good, 60 ms weak, and 120+ ms critical.");
+        SetDashboardMetricQuality(
+            "Loss", hasSamples ? recentLossQuality : null,
+            "Recent-window packet loss: 0% excellent, 1% good, 3% weak, and 10% critical.");
+        SetDashboardMetricQuality(
+            "SuccessFail", hasSamples
+                ? ScoreHigherIsBetter(successPercent, 99.9, 99, 95, 0)
+                : null,
+            "Successful versus failed ping samples since this session started.");
+        SetDashboardMetricQuality(
+            "RunTime", null,
+            "Elapsed time since the live monitoring session started or was reset; duration itself is not graded.");
+        SetDashboardMetricQuality(
+            "Downtime", hasSamples ? availabilityQuality : null,
+            "Accumulated confirmed Internet downtime in this session; its color follows session availability.");
+        SetDashboardMetricQuality(
+            "Availability", hasSamples ? availabilityQuality : null,
+            "Session availability: 99.9%+ excellent, 99% good, 95% weak, and lower values progressively critical.");
+        SetDashboardMetricQuality(
+            "Outages", hasSamples
+                ? ScoreLowerIsBetter(outageRate, 0, 0.25, 1, 3)
+                : null,
+            "Confirmed outages per elapsed session hour: zero is green; three or more per hour is critical.");
+        SetDashboardMetricQuality(
+            "Download", _lastSpeedResult?.DownloadMbps is double download
+                ? ScoreHigherIsBetter(download, 25, 10, 3, 0)
+                : null,
+            "Last completed download test: 25+ Mbps excellent, 10 Mbps good, 3 Mbps weak, and zero critical.");
+        SetDashboardMetricQuality(
+            "Upload", _lastSpeedResult?.UploadMbps is double upload
+                ? ScoreHigherIsBetter(upload, 10, 3, 1, 0)
+                : null,
+            "Last completed upload test: 10+ Mbps excellent, 3 Mbps good, 1 Mbps weak, and zero critical.");
+        SetDashboardMetricQuality(
+            "SpeedPing", _lastSpeedResult is not null
+                ? ScoreLowerIsBetter(_lastSpeedResult.LatencyMs, 40, 80, 150, 300)
+                : null,
+            "Latency measured by the last completed speed test.");
+        SetDashboardMetricQuality(
+            "SpeedLoss", _lastSpeedResult is not null
+                ? ScoreLowerIsBetter(_lastSpeedResult.PacketLossPercent, 0, 1, 3, 10)
+                : null,
+            "Packet loss measured by the last completed speed test.");
+    }
+
+    private void SetDashboardMetricQuality(
+        string key,
+        double? quality,
+        string explanation)
+    {
+        Label value = _metrics[key];
+        value.ForeColor = quality.HasValue
+            ? QualityColor(quality.Value)
+            : NeutralMetricColor();
+        string tooltip = quality.HasValue
+            ? $"Quality {Math.Clamp(quality.Value, 0, 100):0}/100. {explanation}"
+            : explanation;
+        Panel card = _metricCards[key];
+        _buttonTips.SetToolTip(card, tooltip);
+        foreach (Control child in card.Controls)
+            _buttonTips.SetToolTip(child, tooltip);
+    }
+
+    private static double ScoreLowerIsBetter(
+        double value,
+        double excellent,
+        double good,
+        double weak,
+        double critical)
+    {
+        if (value <= excellent)
+            return 100;
+        if (value <= good)
+            return ScaleQuality(value, excellent, good, 100, 75);
+        if (value <= weak)
+            return ScaleQuality(value, good, weak, 75, 40);
+        if (value <= critical)
+            return ScaleQuality(value, weak, critical, 40, 0);
+        return 0;
+    }
+
+    private static double ScoreHigherIsBetter(
+        double value,
+        double excellent,
+        double good,
+        double weak,
+        double critical)
+    {
+        if (value >= excellent)
+            return 100;
+        if (value >= good)
+            return ScaleQuality(value, good, excellent, 75, 100);
+        if (value >= weak)
+            return ScaleQuality(value, weak, good, 40, 75);
+        if (value >= critical)
+            return ScaleQuality(value, critical, weak, 0, 40);
+        return 0;
+    }
+
+    private static double ScaleQuality(
+        double value,
+        double low,
+        double high,
+        double lowScore,
+        double highScore)
+    {
+        if (high <= low)
+            return highScore;
+        return lowScore + Math.Clamp((value - low) / (high - low), 0, 1) *
+            (highScore - lowScore);
+    }
+
+    private Color QualityColor(double quality)
+    {
+        quality = Math.Clamp(quality, 0, 100);
+        bool dark = IsDarkThemeActive();
+        Color red = dark ? Color.FromArgb(230, 62, 70) : Color.FromArgb(148, 18, 29);
+        Color orange = dark ? Color.FromArgb(241, 126, 48) : Color.FromArgb(190, 76, 19);
+        Color yellow = dark ? Color.FromArgb(244, 200, 72) : Color.FromArgb(145, 112, 8);
+        Color lightGreen = dark ? Color.FromArgb(153, 207, 91) : Color.FromArgb(55, 135, 55);
+        Color green = dark ? Color.FromArgb(67, 207, 124) : Color.FromArgb(20, 116, 58);
+        return quality switch
+        {
+            < 35 => InterpolateColor(red, orange, quality / 35D),
+            < 60 => InterpolateColor(orange, yellow, (quality - 35D) / 25D),
+            < 80 => InterpolateColor(yellow, lightGreen, (quality - 60D) / 20D),
+            _ => InterpolateColor(lightGreen, green, (quality - 80D) / 20D)
+        };
+    }
+
+    private Color NeutralMetricColor() => IsDarkThemeActive()
+        ? Color.FromArgb(230, 235, 241)
+        : Color.FromArgb(28, 39, 50);
 
     private void RefreshExperienceSummary(MonitorSnapshot snapshot)
     {
@@ -2455,30 +2762,27 @@ internal sealed class MainForm : Form
         _healthScore.Text = snapshot.SuccessfulPings + snapshot.FailedPings == 0
             ? "--"
             : health.Score.ToString(CultureInfo.CurrentCulture);
-        _healthScore.ForeColor = health.Score switch
-        {
-            >= 75 => Color.SeaGreen,
-            >= 55 => Color.DarkGoldenrod,
-            _ => Color.Firebrick
-        };
+        _healthScore.ForeColor = QualityColor(health.Score);
         _healthSummary.Text = $"{health.Rating} - {health.Summary}";
 
         _smartCandidate = _cellHistory.GetRecommendations()
             .Where(LteCellHistoryStore.IsVisibleToUser)
             .FirstOrDefault(item =>
-                item.IsEligible && item.Confidence is "Medium" or "High" &&
+                item.HasRankingEvidence && item.IsEligible &&
+                item.Confidence is "Medium" or "High" &&
                 TryCreateLockTarget(item, out _, out _));
         if (_smartCandidate is null)
         {
             _smartRecommendation.Text =
-                "Gathering CID plus at least ten minutes of SINR, RSRQ and RSRP evidence.";
+                "Gathering controlled reliability and speed evidence for a complete CID profile in this time period.";
             _smartApplyButton.Enabled = false;
         }
         else
         {
             _smartRecommendation.Text =
                 $"{_smartCandidate.Band}, EARFCN {_smartCandidate.Earfcn} - " +
-                $"RF {_smartCandidate.WeightedScore:0.0}/100; " +
+                $"rank {_smartCandidate.WeightedScore:0.0}/100, " +
+                $"RF {_smartCandidate.RadioScore:0.0}/100; " +
                 $"SINR {_smartCandidate.AverageSinrDb:0.#} dB, " +
                 $"RSRQ {_smartCandidate.AverageRsrqDb:0.#} dB, " +
                 $"RSRP {_smartCandidate.AverageRsrpDbm:0.#} dBm; " +
@@ -2513,6 +2817,8 @@ internal sealed class MainForm : Form
         string? activeProfileKey = _cellHistory.GetActiveProfileKey();
         bool shortProfilesHidden =
             allCurrentRecommendations.Count > currentRecommendations.Count;
+        LteCellRecommendation? recommendedProfile = currentRecommendations
+            .FirstOrDefault(item => item.HasRankingEvidence);
 
         CellHistoryScrollAnchor scrollAnchor = CaptureCellHistoryScrollAnchor();
         var displayRows = new List<CellHistoryDisplayRow>();
@@ -2523,10 +2829,12 @@ internal sealed class MainForm : Form
                 StringComparison.Ordinal);
             CellHistoryRowStyle style = isActive
                 ? CellHistoryRowStyle.Active
+                : string.Equals(item.Key, recommendedProfile?.Key, StringComparison.Ordinal)
+                    ? CellHistoryRowStyle.Recommended
                 : item.UserAdded ? CellHistoryRowStyle.UserAdded
-                : item.IsEligible ? CellHistoryRowStyle.Eligible
+                : item.HasRankingEvidence ? CellHistoryRowStyle.Eligible
                 : CellHistoryRowStyle.Ineligible;
-            string rank = item.IsEligible
+            string rank = item.HasRankingEvidence
                 ? (++eligibleRank).ToString(CultureInfo.CurrentCulture)
                 : "-";
             displayRows.Add(CreateCellHistoryDisplayRow(item, rank, style));
@@ -2536,8 +2844,7 @@ internal sealed class MainForm : Form
 
         RefreshObservedCellLockProfiles();
 
-        LteCellRecommendation? best = currentRecommendations
-            .FirstOrDefault(item => item.IsEligible);
+        LteCellRecommendation? best = recommendedProfile;
         if (best is not null)
         {
             _cellSuggestion.Text =
@@ -2550,8 +2857,8 @@ internal sealed class MainForm : Form
         else if (currentRecommendations.Count > 0)
         {
             _cellSuggestion.Text =
-                "Collecting evidence: each recommendation needs at least 10 connected minutes " +
-                "with a complete CID/EARFCN/PCI identity and measured SINR, RSRQ and RSRP.";
+                "Collecting Rank evidence: run controlled stability and speed tests for the " +
+                "complete CID/EARFCN/PCI candidates in this official-time period. RF remains visible separately.";
             _cellSuggestion.ForeColor = IsDarkThemeActive()
                 ? Color.FromArgb(246, 199, 92)
                 : Color.DarkGoldenrod;
@@ -2614,7 +2921,7 @@ internal sealed class MainForm : Form
         string rank,
         CellHistoryRowStyle style)
     {
-        bool hasCurrentPeriodEvidence = item.PeriodConnectedTime > TimeSpan.Zero;
+        bool hasCurrentPeriodUsage = item.PeriodConnectedTime > TimeSpan.Zero;
         return new CellHistoryDisplayRow(
             $"R|{GetCellHistoryRowKey(item)}",
             item,
@@ -2624,26 +2931,38 @@ internal sealed class MainForm : Form
                 item.Earfcn,
                 item.Pci,
                 item.CellId ?? "-",
-                hasCurrentPeriodEvidence &&
-                LteRecommendationScoring.HasRadioEvidence(item)
-                    ? item.WeightedScore.ToString("0.0", CultureInfo.CurrentCulture)
+                item.PeriodHasRadioEvidence
+                    ? item.RadioScore.ToString("0.0", CultureInfo.CurrentCulture)
                     : "",
-                hasCurrentPeriodEvidence ? FormatCompactDuration(item.PeriodConnectedTime) : "",
-                hasCurrentPeriodEvidence ? FormatHistoryPing(item.AveragePingMs) : "",
-                hasCurrentPeriodEvidence ? FormatEstimatedCellLoad(item.EstimatedCellLoadPercent) : "",
-                hasCurrentPeriodEvidence ? $"{item.PeriodDisconnections} / {item.Disconnections}" : "",
-                hasCurrentPeriodEvidence ? item.DisconnectionsPerHour.ToString("0.00", CultureInfo.CurrentCulture) : "",
-                hasCurrentPeriodEvidence ? FormatMbps(item.AverageDownloadMbps) : "",
-                hasCurrentPeriodEvidence ? FormatMbps(item.AverageUploadMbps) : "",
-                hasCurrentPeriodEvidence ? item.Confidence : "Awaiting usage in current time period"
+                FormatControlledTestGrade(item),
+                hasCurrentPeriodUsage ? FormatCompactDuration(item.PeriodConnectedTime) : "",
+                hasCurrentPeriodUsage ? FormatHistoryPing(item.AveragePingMs) : "",
+                hasCurrentPeriodUsage ? FormatEstimatedCellLoad(item.EstimatedCellLoadPercent) : "",
+                hasCurrentPeriodUsage ? $"{item.PeriodDisconnections} / {item.Disconnections}" : "",
+                hasCurrentPeriodUsage ? item.DisconnectionsPerHour.ToString("0.00", CultureInfo.CurrentCulture) : "",
+                hasCurrentPeriodUsage ? FormatMbps(item.AverageDownloadMbps) : "",
+                hasCurrentPeriodUsage ? FormatMbps(item.AverageUploadMbps) : "",
+                hasCurrentPeriodUsage ? item.Confidence : "Awaiting usage in current time period"
             ],
-            style);
+            style,
+            item.PeriodFailureRatePercent);
+    }
+
+    private static string FormatControlledTestGrade(LteCellRecommendation item)
+    {
+        if (item.PeriodControlledTests <= 0)
+            return "Not tested this period";
+        double failure = item.PeriodFailureRatePercent ?? 0;
+        return $"{item.PeriodControlledTests} test" +
+               (item.PeriodControlledTests == 1 ? "" : "s") +
+               $" • {failure:0}% failed • {item.PeriodControlledRollbacks} rollback" +
+               (item.PeriodControlledRollbacks == 1 ? "" : "s");
     }
 
     /// <summary>
     /// Keeps the grid stable during one-second telemetry updates. A full rebuild
     /// is used only when rows are added, removed, or reordered;
-    /// reordered; otherwise only cell values that actually changed are assigned.
+    /// otherwise only cell values that actually changed are assigned.
     /// </summary>
     private bool ApplyCellHistoryRows(
         IReadOnlyList<CellHistoryDisplayRow> desiredRows,
@@ -2676,7 +2995,12 @@ internal sealed class MainForm : Form
                     int rowIndex = _cellHistoryGrid.Rows.Add(desired.Values);
                     DataGridViewRow row = _cellHistoryGrid.Rows[rowIndex];
                     row.Tag = desired.Tag;
-                    ApplyCellHistoryRowStyle(row, desired.Style);
+                    ApplyCellHistoryRowStyle(
+                        row,
+                        desired.Style,
+                        desired.TestFailureRatePercent);
+                    if (desired.Tag is LteCellRecommendation tooltipRecommendation)
+                        ApplyCellHistoryValueToolTips(row, tooltipRecommendation);
                     if (desired.Tag is LteCellRecommendation recommendation &&
                         string.Equals(
                             GetCellHistoryRowKey(recommendation),
@@ -2698,8 +3022,12 @@ internal sealed class MainForm : Form
                     if (!Equals(row.Cells[cellIndex].Value, newValue))
                         row.Cells[cellIndex].Value = newValue;
                 }
-                if (!Equals(row.HeaderCell.Tag, desired.Style))
-                    ApplyCellHistoryRowStyle(row, desired.Style);
+                ApplyCellHistoryRowStyle(
+                    row,
+                    desired.Style,
+                    desired.TestFailureRatePercent);
+                if (desired.Tag is LteCellRecommendation recommendation)
+                    ApplyCellHistoryValueToolTips(row, recommendation);
             }
             return false;
         }
@@ -2711,7 +3039,8 @@ internal sealed class MainForm : Form
 
     private void ApplyCellHistoryRowStyle(
         DataGridViewRow row,
-        CellHistoryRowStyle style)
+        CellHistoryRowStyle style,
+        double? testFailureRatePercent)
     {
         row.HeaderCell.Tag = style;
         row.DefaultCellStyle.BackColor = Color.Empty;
@@ -2719,6 +3048,11 @@ internal sealed class MainForm : Form
         row.DefaultCellStyle.SelectionBackColor = Color.Empty;
         row.DefaultCellStyle.SelectionForeColor = Color.Empty;
         row.DefaultCellStyle.Font = null;
+        DataGridViewCell testGradeCell = row.Cells["TestGrade"];
+        testGradeCell.Style.BackColor = Color.Empty;
+        testGradeCell.Style.ForeColor = Color.Empty;
+        testGradeCell.Style.SelectionBackColor = Color.Empty;
+        testGradeCell.Style.SelectionForeColor = Color.Empty;
         row.Cells["Band"].Style.Padding = style == CellHistoryRowStyle.Group
             ? Padding.Empty
             : new Padding(10, 0, 0, 0);
@@ -2762,19 +3096,139 @@ internal sealed class MainForm : Form
                 break;
             case CellHistoryRowStyle.Active:
                 row.DefaultCellStyle.BackColor = dark
-                    ? Color.FromArgb(30, 77, 55)
-                    : Color.FromArgb(211, 239, 220);
+                    ? Color.FromArgb(27, 82, 145)
+                    : Color.FromArgb(198, 224, 252);
                 row.DefaultCellStyle.ForeColor = dark
-                    ? Color.FromArgb(225, 249, 233)
-                    : Color.FromArgb(19, 91, 48);
+                    ? Color.FromArgb(232, 244, 255)
+                    : Color.FromArgb(17, 64, 113);
                 row.DefaultCellStyle.SelectionBackColor = dark
-                    ? Color.FromArgb(39, 115, 76)
-                    : Color.FromArgb(112, 190, 137);
+                    ? Color.FromArgb(38, 111, 190)
+                    : Color.FromArgb(126, 184, 238);
                 row.DefaultCellStyle.SelectionForeColor = dark
                     ? Color.White
-                    : Color.FromArgb(9, 55, 25);
+                    : Color.FromArgb(8, 42, 78);
+                break;
+            case CellHistoryRowStyle.Recommended:
+                row.DefaultCellStyle.BackColor = dark
+                    ? Color.FromArgb(76, 47, 122)
+                    : Color.FromArgb(228, 214, 249);
+                row.DefaultCellStyle.ForeColor = dark
+                    ? Color.FromArgb(247, 239, 255)
+                    : Color.FromArgb(69, 35, 113);
+                row.DefaultCellStyle.SelectionBackColor = dark
+                    ? Color.FromArgb(105, 67, 164)
+                    : Color.FromArgb(181, 151, 225);
+                row.DefaultCellStyle.SelectionForeColor = dark
+                    ? Color.White
+                    : Color.FromArgb(45, 20, 76);
                 break;
         }
+
+        if (testFailureRatePercent.HasValue)
+        {
+            if (style is CellHistoryRowStyle.Active or CellHistoryRowStyle.Recommended)
+                ApplyControlledTestGrade(testGradeCell, testFailureRatePercent.Value, dark);
+            else
+                ApplyControlledTestGrade(row, testFailureRatePercent.Value, dark);
+        }
+        if (style is CellHistoryRowStyle.Active or CellHistoryRowStyle.Recommended)
+            row.DefaultCellStyle.Font = _cellGroupFont;
+    }
+
+    private static void ApplyCellHistoryValueToolTips(
+        DataGridViewRow row,
+        LteCellRecommendation item)
+    {
+        row.Cells["Score"].ToolTipText = FormatRfScoreToolTip(item);
+        row.Cells["Rank"].ToolTipText =
+            $"Rank {item.WeightedScore:0.0}/100\r\n" +
+            "50% stable controlled connection without failure/rollback\r\n" +
+            "25% download versus the best current-period candidate\r\n" +
+            "25% upload versus the best current-period candidate\r\n" +
+            "Missing reliability or speed evidence contributes 0. RF is shown separately and does not affect Rank.";
+        row.Cells["TestGrade"].ToolTipText = item.PeriodControlledTests > 0
+            ? $"Current-period controlled reliability: {item.PeriodReliabilityScore:0.0}/100. " +
+              $"{item.PeriodControlledFailures} failed and " +
+              $"{item.PeriodControlledRollbacks} rolled back from " +
+              $"{item.PeriodControlledTests} tests."
+            : "No controlled stability test has completed in the current official-time period; the 50% reliability component is therefore 0.";
+    }
+
+    private static string FormatRfScoreToolTip(LteCellRecommendation item)
+    {
+        if (!LteRecommendationScoring.HasRadioEvidence(item))
+            return "RF score unavailable in this official-time period. Signal/SINR, RSRQ and RSRP are required.";
+
+        double sinrScore = LteRecommendationScoring.ScoreSinr(item.AverageSinrDb);
+        double rsrqScore = LteRecommendationScoring.ScoreRsrq(item.AverageRsrqDb);
+        double rsrpScore = LteRecommendationScoring.ScoreRsrp(item.AverageRsrpDbm);
+        return $"RF {item.RadioScore:0.0}/100\r\n" +
+               $"TP-Link signal {FormatOptionalNumber(item.AverageSignalPercent, "0.0")}%\r\n" +
+               $"SNR/SINR {item.AverageSinrDb:0.0} dB → {sinrScore:0.0}/100 × 50% = {sinrScore * 0.50:0.0}\r\n" +
+               $"RSRQ {item.AverageRsrqDb:0.0} dB → {rsrqScore:0.0}/100 × 35% = {rsrqScore * 0.35:0.0}\r\n" +
+               $"Signal power (RSRP) {item.AverageRsrpDbm:0.0} dBm → {rsrpScore:0.0}/100 × 15% = {rsrpScore * 0.15:0.0}\r\n" +
+               "These are current-period radio measurements; RF does not affect Rank.";
+    }
+
+    private static void ApplyControlledTestGrade(
+        DataGridViewRow row,
+        double failureRatePercent,
+        bool dark)
+    {
+        double failure = Math.Clamp(failureRatePercent / 100D, 0D, 1D);
+        Color green = dark
+            ? Color.FromArgb(24, 89, 57)
+            : Color.FromArgb(202, 239, 214);
+        Color deepRed = dark
+            ? Color.FromArgb(96, 18, 26)
+            : Color.FromArgb(214, 72, 79);
+        Color background = InterpolateColor(green, deepRed, failure);
+        row.DefaultCellStyle.BackColor = background;
+        row.DefaultCellStyle.ForeColor = dark || failure >= 0.62
+            ? Color.White
+            : Color.FromArgb(18, 48, 29);
+        row.DefaultCellStyle.SelectionBackColor = InterpolateColor(
+            background,
+            Color.White,
+            dark ? 0.18 : 0.12);
+        row.DefaultCellStyle.SelectionForeColor = dark || failure >= 0.62
+            ? Color.White
+            : Color.FromArgb(9, 35, 18);
+    }
+
+    private static void ApplyControlledTestGrade(
+        DataGridViewCell cell,
+        double failureRatePercent,
+        bool dark)
+    {
+        double failure = Math.Clamp(failureRatePercent / 100D, 0D, 1D);
+        Color green = dark
+            ? Color.FromArgb(24, 89, 57)
+            : Color.FromArgb(202, 239, 214);
+        Color deepRed = dark
+            ? Color.FromArgb(96, 18, 26)
+            : Color.FromArgb(214, 72, 79);
+        Color background = InterpolateColor(green, deepRed, failure);
+        cell.Style.BackColor = background;
+        cell.Style.ForeColor = dark || failure >= 0.62
+            ? Color.White
+            : Color.FromArgb(18, 48, 29);
+        cell.Style.SelectionBackColor = InterpolateColor(
+            background,
+            Color.White,
+            dark ? 0.18 : 0.12);
+        cell.Style.SelectionForeColor = dark || failure >= 0.62
+            ? Color.White
+            : Color.FromArgb(9, 35, 18);
+    }
+
+    private static Color InterpolateColor(Color from, Color to, double amount)
+    {
+        amount = Math.Clamp(amount, 0D, 1D);
+        return Color.FromArgb(
+            (int)Math.Round(from.R + (to.R - from.R) * amount),
+            (int)Math.Round(from.G + (to.G - from.G) * amount),
+            (int)Math.Round(from.B + (to.B - from.B) * amount));
     }
 
     private static string? GetCellHistoryStructureKey(object? tag) => tag switch
@@ -2874,6 +3328,9 @@ internal sealed class MainForm : Form
             "Pci" => OrderCellHistory(source, item => NumericSort(item.Pci)),
             "Cid" => OrderCellHistory(source, item => NumericSort(item.CellId)),
             "Score" => OrderCellHistory(source, item => item.WeightedScore),
+            "TestGrade" => OrderCellHistory(
+                source,
+                item => item.PeriodFailureRatePercent ?? double.MaxValue),
             "Time" => OrderCellHistory(source, item => item.PeriodConnectedTime),
             "Ping" => OrderCellHistory(source, item => item.AveragePingMs ?? double.MaxValue),
             "Load" => OrderCellHistory(source, item => item.EstimatedCellLoadPercent ?? double.MaxValue),
@@ -4516,7 +4973,8 @@ internal sealed class MainForm : Form
             _cellHistory.GetRecommendations();
         LteCellRecommendation? best = recommendations
             .FirstOrDefault(item =>
-                item.IsEligible && item.Confidence is "Medium" or "High");
+                item.HasRankingEvidence && item.IsEligible &&
+                item.Confidence is "Medium" or "High");
         if (best is null ||
             !TryCreateLockTarget(best, out RouterCellLockTarget? target, out _))
             return;
@@ -4557,7 +5015,7 @@ internal sealed class MainForm : Form
         _settings.Save();
     }
 
-    private async Task ApplyCellLockWithRollbackAsync(
+    private async Task<CellLockApplyOutcome> ApplyCellLockWithRollbackAsync(
         LteCellRecommendation recommendation,
         RouterCellLockTarget target,
         bool automatic,
@@ -4565,7 +5023,7 @@ internal sealed class MainForm : Form
         CancellationToken cancellationToken = default)
     {
         if (_cellLockBusy)
-            return;
+            return CellLockApplyOutcome.NotApplied;
         if (_speedBusy && !_speedTestManual)
             CancelAutomaticSpeedTestForProfileChange("LTE profile change");
         _cellLockBusy = true;
@@ -4596,7 +5054,7 @@ internal sealed class MainForm : Form
                             MessageBoxButtons.OK,
                             MessageBoxIcon.Information);
                     }
-                    return;
+                    return CellLockApplyOutcome.AlreadyActive;
                 }
                 _settings.PendingCellLockRollback = previousState;
                 _settings.PendingCellLockTargetKey = recommendation.Key;
@@ -4635,7 +5093,7 @@ internal sealed class MainForm : Form
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Information);
                 }
-                return;
+                return CellLockApplyOutcome.AppliedWithoutOnlineValidation;
             }
             _routerDetails.Text =
                 $"Validating {recommendation.Band} Cell Lock for " +
@@ -4674,7 +5132,7 @@ internal sealed class MainForm : Form
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Warning);
                 }
-                return;
+                return CellLockApplyOutcome.RolledBack;
             }
 
             ClearPendingCellLock();
@@ -4693,6 +5151,7 @@ internal sealed class MainForm : Form
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);
             }
+            return CellLockApplyOutcome.Validated;
         }
         catch (Exception ex)
         {
@@ -4730,6 +5189,9 @@ internal sealed class MainForm : Form
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
             }
+            return restored
+                ? CellLockApplyOutcome.RolledBack
+                : CellLockApplyOutcome.RecoveryPending;
         }
         finally
         {
@@ -6035,11 +6497,13 @@ internal sealed class MainForm : Form
         if (_speedBusy && !_speedTestManual)
             CancelAutomaticSpeedTestForProfileChange("controlled LTE experiment");
         if (_cellLockBusy || (_speedBusy && _speedTestManual) ||
-            !_settings.TpLinkRouterEnabled)
+            !_settings.TpLinkRouterEnabled ||
+            !_engine.GetSnapshot().IsOnline)
         {
             MessageBox.Show(
-                "Connect TP-Link monitoring and wait for any current router or speed-test " +
-                "operation to finish.",
+                "Controlled comparison needs an online baseline, connected TP-Link " +
+                "monitoring, and no manual speed test or router change in progress. " +
+                "Manual Cell Lock remains available while Internet is offline.",
                 "Controlled Cell Experiment",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
@@ -6048,20 +6512,17 @@ internal sealed class MainForm : Form
 
         var candidates = new List<(LteCellRecommendation Recommendation, RouterCellLockTarget Target)>();
         foreach (LteCellRecommendation recommendation in _cellHistory.GetRecommendations()
-                     .Where(LteCellHistoryStore.IsVisibleToUser)
-                     .Where(item => item.IsEligible && item.Confidence is "Medium" or "High"))
+                     .Where(LteCellHistoryStore.IsVisibleToUser))
         {
             if (TryCreateLockTarget(recommendation, out RouterCellLockTarget? target, out _) &&
                 target is not null)
                 candidates.Add((recommendation, target));
-            if (candidates.Count == 3)
-                break;
         }
-        if (candidates.Count < 2)
+        if (candidates.Count == 0)
         {
             MessageBox.Show(
-                "At least two eligible profiles with complete CID and radio-quality " +
-                "evidence are required. Keep monitoring SINR, RSRQ and RSRP first.",
+                "No lock-ready candidates were found. Run Scan bands & cells first, " +
+                "or save a complete PCell profile with CID, EARFCN and PCI.",
                 "Controlled Cell Experiment",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
@@ -6070,13 +6531,20 @@ internal sealed class MainForm : Form
 
         int minutes = _settings.CellExperimentMinutesPerProfile;
         string shortlist = string.Join(Environment.NewLine,
-            candidates.Select((item, index) =>
-                $"{index + 1}. {item.Recommendation.Band}, EARFCN {item.Recommendation.Earfcn}"));
+            candidates.Take(12).Select((item, index) =>
+                $"{index + 1}. {item.Recommendation.Band} • " +
+                $"EARFCN {item.Recommendation.Earfcn} • PCI {item.Recommendation.Pci} • " +
+                $"CID {item.Recommendation.CellId}"));
+        if (candidates.Count > 12)
+            shortlist += $"{Environment.NewLine}…and {candidates.Count - 12} more saved candidates";
         if (MessageBox.Show(
-                $"Test {candidates.Count} measured profiles for approximately " +
-                $"{minutes} minutes each?\r\n\r\n{shortlist}\r\n\r\n" +
-                "Each change uses connectivity validation and rollback. The original " +
-                "router state is restored when the experiment finishes or is cancelled.",
+                $"Test all {candidates.Count} lock-ready profiles for approximately " +
+                $"{minutes} minutes each ({candidates.Count * minutes} minutes total)?\r\n\r\n" +
+                $"{shortlist}\r\n\r\n" +
+                "Candidates that are still awaiting normal usage are included. Every result " +
+                "is saved in the official-time period in which that test finishes. A failed " +
+                "validation is rolled back, and the original router state is restored between " +
+                "profiles and when the experiment ends.",
                 "Controlled Cell Experiment",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning,
@@ -6087,9 +6555,13 @@ internal sealed class MainForm : Form
         string originalKey = _settings.LastAutomaticCellLockKey;
         DateTime? originalLockUtc = _settings.LastAutomaticCellLockUtc;
         LteCellRecommendation? winner = null;
+        var successfulKeys = new HashSet<string>(StringComparer.Ordinal);
         _experimentCancellation = new CancellationTokenSource();
         CancellationToken token = _experimentCancellation.Token;
         _experimentButton.Text = "Cancel experiment";
+        SetLteProfileMutationEnabled(false);
+        _experimentButton.Enabled = true;
+        _speedButton.Enabled = false;
         try
         {
             using (var readTimeout = CancellationTokenSource.CreateLinkedTokenSource(token))
@@ -6107,34 +6579,78 @@ internal sealed class MainForm : Form
                      in candidates.Select((item, index) => (item, index)))
             {
                 token.ThrowIfCancellationRequested();
+                if (index > 0 && originalState is not null &&
+                    !await RestoreExperimentBaselineAsync(originalState, token))
+                    throw new InvalidOperationException(
+                        "The original router state could not be restored before the next candidate.");
+
+                int testPeriod = LteCellHistoryStore.GetTimePeriod(_clock.Now.DateTime);
                 _experimentStatus.Text =
-                    $"Testing {index + 1}/{candidates.Count}: {recommendation.Band}";
-                await ApplyCellLockWithRollbackAsync(
+                    $"Testing {index + 1}/{candidates.Count}: {recommendation.Band} • " +
+                    LteCellHistoryStore.GetTimePeriodLabel(testPeriod);
+                CellLockApplyOutcome applyOutcome = await ApplyCellLockWithRollbackAsync(
                     recommendation,
                     target,
                     automatic: false,
                     showResult: false,
                     cancellationToken: token);
                 token.ThrowIfCancellationRequested();
-                if (!_engine.GetSnapshot().IsOnline ||
-                    !MatchesTarget(_routerMonitor.GetSnapshot(), target))
+
+                bool stable = (applyOutcome is CellLockApplyOutcome.AlreadyActive or
+                                  CellLockApplyOutcome.Validated) &&
+                              _engine.GetSnapshot().IsOnline &&
+                              MatchesTarget(_routerMonitor.GetSnapshot(), target);
+                bool rolledBack = applyOutcome == CellLockApplyOutcome.RolledBack;
+                if (!stable)
                 {
+                    _cellHistory.RecordControlledTest(
+                        recommendation.Key,
+                        succeeded: false,
+                        rolledBack,
+                        DateTime.UtcNow);
                     AddLoggedEvent(new MonitorEvent
                     {
                         Kind = "LTE EXPERIMENT",
-                        Message = $"{recommendation.Band} failed connectivity validation"
+                        Message = $"{recommendation.Band} • CID {recommendation.CellId} " +
+                                  "failed connectivity validation" +
+                                  (rolledBack ? " and was rolled back" : "")
                     });
+                    RefreshCellHistory(force: true);
                     continue;
                 }
 
                 TimeSpan remaining = TimeSpan.FromMinutes(minutes) -
                                      TimeSpan.FromSeconds(_settings.CellLockValidationSeconds);
                 if (remaining > TimeSpan.Zero)
-                    await Task.Delay(remaining, token);
-                await RunSpeedTestAsync(
-                    manual: false,
-                    automaticReason: $"controlled experiment on {recommendation.Band}");
+                    stable = await ObserveControlledProfileAsync(target, remaining, token);
+                if (stable)
+                {
+                    await RunSpeedTestAsync(
+                        manual: false,
+                        automaticReason: $"controlled experiment on {recommendation.Band}");
+                    stable = _engine.GetSnapshot().IsOnline &&
+                             MatchesTarget(_routerMonitor.GetSnapshot(), target);
+                }
                 token.ThrowIfCancellationRequested();
+
+                if (!stable && originalState is not null)
+                    rolledBack = await RestoreExperimentBaselineAsync(originalState, token);
+                _cellHistory.RecordControlledTest(
+                    recommendation.Key,
+                    succeeded: stable,
+                    rolledBack,
+                    DateTime.UtcNow);
+                if (stable)
+                    successfulKeys.Add(recommendation.Key);
+                AddLoggedEvent(new MonitorEvent
+                {
+                    Kind = "LTE EXPERIMENT",
+                    Message = stable
+                        ? $"{recommendation.Band} • CID {recommendation.CellId} passed controlled validation"
+                        : $"{recommendation.Band} • CID {recommendation.CellId} failed during observation" +
+                          (rolledBack ? " and was rolled back" : "")
+                });
+                RefreshCellHistory(force: true);
             }
 
             IReadOnlySet<string> testedKeys = candidates
@@ -6142,7 +6658,8 @@ internal sealed class MainForm : Form
                 .ToHashSet(StringComparer.Ordinal);
             IReadOnlyList<CellExperimentResult> results = CellExperimentEvaluator.Rank(
                 _cellHistory.GetRecommendations()
-                    .Where(item => testedKeys.Contains(item.Key)));
+                    .Where(item => testedKeys.Contains(item.Key) &&
+                                   successfulKeys.Contains(item.Key)));
             winner = results.FirstOrDefault()?.Recommendation;
             if (winner is not null)
             {
@@ -6200,7 +6717,9 @@ internal sealed class MainForm : Form
             _settings.Save();
             _experimentCancellation.Dispose();
             _experimentCancellation = null;
-            _experimentButton.Text = "Run controlled experiment...";
+            _experimentButton.Text = "Run controlled";
+            SetLteProfileMutationEnabled(true);
+            _speedButton.Enabled = true;
             _experimentStatus.Text = "Experiment mode is idle";
             RefreshCellHistory(force: true);
         }
@@ -6347,14 +6866,21 @@ internal sealed class MainForm : Form
     private void ConfigureDashboardMetricGrid(bool simple)
     {
         string[] keys = simple
-            ? ["Ping", "Loss", "Availability", "Outages", "Download", "Upload"]
+            ? [
+                "CurrentLteSet", "CurrentIp", "ConnectionStable",
+                "ConnectionOutages", "SessionAverage",
+                "Ping", "Loss", "Availability",
+                "Download", "Upload", "SpeedPing"
+            ]
             : [
-                "Ping", "Jitter", "Loss", "SuccessFail",
+                "CurrentLteSet", "CurrentIp", "ConnectionStable", "Ping",
+                "ConnectionOutages", "SessionAverage", "Jitter", "Loss",
+                "SuccessFail",
                 "RunTime", "Downtime", "Availability", "Outages",
                 "Download", "Upload", "SpeedPing", "SpeedLoss"
             ];
         int columns = simple ? 3 : 4;
-        int rows = simple ? 2 : 3;
+        int rows = simple ? 4 : 5;
 
         _dashboardMetricGrid.SuspendLayout();
         try
@@ -7177,12 +7703,90 @@ internal sealed class MainForm : Form
         }
     }
 
+    internal void RestoreFromExternalLaunch()
+    {
+        if (IsDisposed)
+            return;
+        if (!IsHandleCreated)
+        {
+            _externalActivationPending = true;
+            return;
+        }
+        if (InvokeRequired)
+        {
+            if (IsHandleCreated)
+                BeginInvoke(RestoreFromExternalLaunch);
+            return;
+        }
+        RestoreFromTray();
+    }
+
+    private async Task<bool> ObserveControlledProfileAsync(
+        RouterCellLockTarget target,
+        TimeSpan duration,
+        CancellationToken cancellationToken)
+    {
+        DateTime endUtc = DateTime.UtcNow + duration;
+        int consecutiveFailures = 0;
+        while (DateTime.UtcNow < endUtc)
+        {
+            TimeSpan wait = endUtc - DateTime.UtcNow;
+            if (wait <= TimeSpan.Zero)
+                break;
+            await Task.Delay(
+                wait > TimeSpan.FromSeconds(2) ? TimeSpan.FromSeconds(2) : wait,
+                cancellationToken);
+            bool valid = _engine.GetSnapshot().IsOnline &&
+                         MatchesTarget(_routerMonitor.GetSnapshot(), target);
+            consecutiveFailures = valid ? 0 : consecutiveFailures + 1;
+            if (consecutiveFailures >= 3)
+                return false;
+        }
+        return true;
+    }
+
+    private async Task<bool> RestoreExperimentBaselineAsync(
+        RouterLockState originalState,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(25));
+            await _routerMonitor.RestoreLockStateAsync(originalState, timeout.Token);
+            ClearPendingCellLock();
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            AddLoggedEvent(new MonitorEvent
+            {
+                Kind = "LTE EXPERIMENT ERROR",
+                Message = "Could not restore the controlled-test baseline: " +
+                          FriendlyUiError(ex)
+            });
+            return false;
+        }
+    }
+
     private void RestoreFromTray()
     {
-        Show();
         ShowInTaskbar = true;
+        Show();
         WindowState = FormWindowState.Normal;
+        BringToFront();
         Activate();
+        // Windows can refuse foreground activation after another process was
+        // launched. Briefly toggling TopMost reliably surfaces the existing
+        // window without leaving it above other applications.
+        TopMost = true;
+        TopMost = false;
+        Focus();
     }
 
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
@@ -7225,6 +7829,7 @@ internal sealed class MainForm : Form
         {
         }
         _cellHistory.Dispose();
+        _buttonTips.Dispose();
         _smsUnreadFont.Dispose();
         _cellGroupFont.Dispose();
         _trayIcon.Visible = false;
@@ -7269,14 +7874,26 @@ internal sealed class MainForm : Form
         Ineligible,
         UserAdded,
         Active,
+        Recommended,
         Group
+    }
+
+    private enum CellLockApplyOutcome
+    {
+        NotApplied,
+        AlreadyActive,
+        Validated,
+        AppliedWithoutOnlineValidation,
+        RolledBack,
+        RecoveryPending
     }
 
     private sealed record CellHistoryDisplayRow(
         string StructureKey,
         object Tag,
         object?[] Values,
-        CellHistoryRowStyle Style);
+        CellHistoryRowStyle Style,
+        double? TestFailureRatePercent);
 
     private sealed record ObservedCellLockOption(
         string Label,

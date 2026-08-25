@@ -123,6 +123,7 @@ internal sealed class BandDiscoveryResultsForm : Form
         layout.Controls.Add(controls, 0, 2);
         Controls.Add(layout);
         AcceptButton = close;
+        InterfaceHelp.Install(this);
         AppThemeManager.Apply(this, theme);
     }
 
@@ -135,6 +136,7 @@ internal sealed class BandDiscoveryResultsForm : Form
         {
             Name = name,
             HeaderText = header,
+            ToolTipText = InterfaceHelp.ColumnDescription(name, header),
             FillWeight = weight,
             SortMode = DataGridViewColumnSortMode.Automatic
         });
