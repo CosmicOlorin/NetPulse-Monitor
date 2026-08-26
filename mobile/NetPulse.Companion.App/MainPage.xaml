@@ -2,7 +2,7 @@
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui" xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml" x:Class="NetPulse.Companion.App.MainPage" BackgroundColor="#111820" Shell.NavBarIsVisible="False">
   <Grid RowDefinitions="Auto,*" Padding="18,16">
     <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,14">
-      <VerticalStackLayout Spacing="0"><Label Text="NetPulse Monitor" FontSize="28" FontAttributes="Bold" TextColor="#F3F7FA"/><Label Text="Secure LAN companion" FontSize="13" TextColor="#8FA3B5"/></VerticalStackLayout>
+      <VerticalStackLayout Spacing="0"><Label Text="NetPulse Monitor" FontSize="28" FontAttributes="Bold" TextColor="#F3F7FA"/><Label Text="End-to-end Internet monitoring with router telemetry" FontSize="12" TextColor="#8FA3B5"/></VerticalStackLayout>
       <Border Grid.Column="1" BackgroundColor="#183D32" Stroke="#2BAA78" StrokeThickness="1" Padding="12,7"><Label x:Name="ConnectionBadge" Text="NOT PAIRED" FontAttributes="Bold" TextColor="#63D9A7"/></Border>
     </Grid>
     <ScrollView Grid.Row="1"><VerticalStackLayout Spacing="14">
@@ -14,27 +14,34 @@
         <Label x:Name="PairingErrorLabel" TextColor="#FF8A80" IsVisible="False"/>
       </VerticalStackLayout></Border>
       <VerticalStackLayout x:Name="DashboardPanel" IsVisible="False" Spacing="12">
-        <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="6">
-          <Button Text="Status" Clicked="OnStatusTabClicked" BackgroundColor="#25445E" TextColor="White"/>
-          <Button Grid.Column="1" Text="SMS" Clicked="OnSmsTabClicked" BackgroundColor="#25445E" TextColor="White"/>
-          <Button Grid.Column="2" Text="LTE control" Clicked="OnLteTabClicked" BackgroundColor="#25445E" TextColor="White"/>
-          <Button Grid.Column="3" Text="Devices" Clicked="OnDevicesTabClicked" BackgroundColor="#25445E" TextColor="White"/>
+        <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="4">
+          <Button Text="Dashboard" FontSize="12" Clicked="OnStatusTabClicked" BackgroundColor="#16875D" TextColor="White"/>
+          <Button Grid.Column="1" Text="SMS" FontSize="12" Clicked="OnSmsTabClicked" BackgroundColor="#25445E" TextColor="White"/>
+          <Button Grid.Column="2" Text="LTE control" FontSize="12" Clicked="OnLteTabClicked" BackgroundColor="#25445E" TextColor="White"/>
+          <Button Grid.Column="3" Text="Devices" FontSize="12" Clicked="OnDevicesTabClicked" BackgroundColor="#25445E" TextColor="White"/>
         </Grid>
         <VerticalStackLayout x:Name="StatusContent" Spacing="12">
-        <Label x:Name="LastUpdateLabel" Text="Waiting for live data…" TextColor="#8FA3B5"/>
-        <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="10">
-          <Border BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><VerticalStackLayout><Label Text="INTERNET" TextColor="#8FA3B5"/><Label x:Name="InternetLabel" Text="—" FontSize="22" FontAttributes="Bold" TextColor="#F3F7FA"/></VerticalStackLayout></Border>
-          <Border Grid.Column="1" BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><VerticalStackLayout><Label Text="ROUTER / LTE" TextColor="#8FA3B5"/><Label x:Name="RouterLabel" Text="—" FontSize="18" FontAttributes="Bold" TextColor="#F3F7FA" LineBreakMode="WordWrap"/></VerticalStackLayout></Border>
-          <Border Grid.Row="1" BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><VerticalStackLayout><Label Text="PING / JITTER" TextColor="#8FA3B5"/><Label x:Name="PingLabel" Text="—" FontSize="20" FontAttributes="Bold" TextColor="#F3F7FA"/></VerticalStackLayout></Border>
-          <Border Grid.Row="1" Grid.Column="1" BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><VerticalStackLayout><Label Text="LOSS / AVAILABILITY" TextColor="#8FA3B5"/><Label x:Name="QualityLabel" Text="—" FontSize="18" FontAttributes="Bold" TextColor="#F3F7FA"/></VerticalStackLayout></Border>
-          <Border Grid.Row="2" BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><VerticalStackLayout><Label Text="LTE PROFILE" TextColor="#8FA3B5"/><Label x:Name="ProfileLabel" Text="—" FontSize="18" FontAttributes="Bold" TextColor="#F3F7FA" LineBreakMode="WordWrap"/></VerticalStackLayout></Border>
-          <Border Grid.Row="2" Grid.Column="1" BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><VerticalStackLayout><Label Text="SIGNAL" TextColor="#8FA3B5"/><Label x:Name="SignalLabel" Text="—" FontSize="15" FontAttributes="Bold" TextColor="#F3F7FA" LineBreakMode="WordWrap"/></VerticalStackLayout></Border>
-        </Grid>
-        <Border BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="7">
-          <Label Text="EARFCN" TextColor="#8FA3B5"/><Label Grid.Column="1" x:Name="EarfcnLabel" Text="—" TextColor="#F3F7FA"/>
-          <Label Grid.Row="1" Text="PCI / CID" TextColor="#8FA3B5"/><Label Grid.Row="1" Grid.Column="1" x:Name="IdentityLabel" Text="—" TextColor="#F3F7FA"/>
-          <Label Grid.Row="2" Text="Outages / unread SMS" TextColor="#8FA3B5"/><Label Grid.Row="2" Grid.Column="1" x:Name="EventsLabel" Text="—" TextColor="#F3F7FA"/>
-        </Grid></Border>
+        <Grid ColumnDefinitions="*,Auto"><Label Text="DASHBOARD" FontAttributes="Bold" TextColor="#5DC8FF"/><Label Grid.Column="1" x:Name="LastUpdateLabel" Text="Waiting for live data…" FontSize="11" TextColor="#8FA3B5"/></Grid>
+        <Border BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><VerticalStackLayout Spacing="10">
+          <Label Text="CURRENT CONNECTION — THIS PHONE → INTERNET" FontAttributes="Bold" TextColor="#5DC8FF"/>
+          <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="10" RowSpacing="10">
+            <VerticalStackLayout><Label Text="INTERNET" FontSize="11" TextColor="#8FA3B5"/><Label x:Name="InternetLabel" Text="—" FontSize="22" FontAttributes="Bold" TextColor="#F3F7FA"/></VerticalStackLayout>
+            <VerticalStackLayout Grid.Column="1"><Label Text="PING / JITTER" FontSize="11" TextColor="#8FA3B5"/><Label x:Name="PingLabel" Text="—" FontSize="18" FontAttributes="Bold" TextColor="#F3F7FA"/></VerticalStackLayout>
+            <VerticalStackLayout Grid.Row="1"><Label Text="LOSS / AVAILABILITY" FontSize="11" TextColor="#8FA3B5"/><Label x:Name="QualityLabel" Text="—" FontSize="17" FontAttributes="Bold" TextColor="#F3F7FA"/></VerticalStackLayout>
+            <VerticalStackLayout Grid.Row="1" Grid.Column="1"><Label Text="OUTAGES / UNREAD SMS" FontSize="11" TextColor="#8FA3B5"/><Label x:Name="EventsLabel" Text="—" FontSize="17" FontAttributes="Bold" TextColor="#F3F7FA"/></VerticalStackLayout>
+          </Grid>
+        </VerticalStackLayout></Border>
+        <Border BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><VerticalStackLayout Spacing="10">
+          <Label Text="ROUTER LTE TELEMETRY" FontAttributes="Bold" TextColor="#5DC8FF"/>
+          <Label x:Name="RouterLabel" Text="—" FontSize="17" FontAttributes="Bold" TextColor="#F3F7FA" LineBreakMode="WordWrap"/>
+          <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="10">
+            <VerticalStackLayout><Label Text="SERVING PROFILE" FontSize="11" TextColor="#8FA3B5"/><Label x:Name="ProfileLabel" Text="—" FontSize="17" FontAttributes="Bold" TextColor="#F3F7FA" LineBreakMode="WordWrap"/></VerticalStackLayout>
+            <VerticalStackLayout Grid.Column="1"><Label Text="RF VALUES" FontSize="11" TextColor="#8FA3B5"/><Label x:Name="SignalLabel" Text="—" FontSize="14" FontAttributes="Bold" TextColor="#F3F7FA" LineBreakMode="WordWrap"/></VerticalStackLayout>
+            <VerticalStackLayout Grid.Row="1"><Label Text="EARFCN" FontSize="11" TextColor="#8FA3B5"/><Label x:Name="EarfcnLabel" Text="—" FontSize="17" FontAttributes="Bold" TextColor="#F3F7FA"/></VerticalStackLayout>
+            <VerticalStackLayout Grid.Row="1" Grid.Column="1"><Label Text="PCI / CID" FontSize="11" TextColor="#8FA3B5"/><Label x:Name="IdentityLabel" Text="—" FontSize="17" FontAttributes="Bold" TextColor="#F3F7FA"/></VerticalStackLayout>
+            <VerticalStackLayout Grid.Row="2" Grid.ColumnSpan="2"><Label Text="LIVE ROUTER TRAFFIC — UP / DOWN" FontSize="11" TextColor="#8FA3B5"/><Label x:Name="RouterRateLabel" Text="—" FontSize="17" FontAttributes="Bold" TextColor="#F3F7FA"/></VerticalStackLayout>
+          </Grid>
+        </VerticalStackLayout></Border>
         <Label x:Name="LiveErrorLabel" TextColor="#FFB86C" IsVisible="False" LineBreakMode="WordWrap"/>
         <Border BackgroundColor="#1B2530" Stroke="#354454" Padding="14"><VerticalStackLayout Spacing="8">
           <Label Text="COMPANION APP" TextColor="#8FA3B5"/>

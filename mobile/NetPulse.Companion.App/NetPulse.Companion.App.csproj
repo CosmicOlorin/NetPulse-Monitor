@@ -9,8 +9,8 @@
     <Nullable>enable</Nullable>
     <ApplicationTitle>NetPulse Monitor</ApplicationTitle>
     <ApplicationId>com.cosmicolorin.netpulse.companion</ApplicationId>
-    <ApplicationDisplayVersion>1.0.21</ApplicationDisplayVersion>
-    <ApplicationVersion>14</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0.22</ApplicationDisplayVersion>
+    <ApplicationVersion>15</ApplicationVersion>
     <SupportedOSPlatformVersion>23.0</SupportedOSPlatformVersion>
   </PropertyGroup>
   <ItemGroup>

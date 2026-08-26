@@ -185,6 +185,7 @@ public partial class MainPage : ContentPage
         SignalLabel.Text = $"RSRP {Value(s.RsrpDbm, "dBm")} · RSRQ {Value(s.RsrqDb, "dB")} · SNR {Value(s.SnrDb, "dB")}";
         EarfcnLabel.Text = Empty(s.Earfcn); IdentityLabel.Text = $"{Empty(s.Pci)} / {Empty(s.CellId)}";
         EventsLabel.Text = $"{s.Outages} / {(s.UnreadSmsCount?.ToString() ?? "—")}";
+        RouterRateLabel.Text = $"{Rate(s.UploadBytesPerSecond)} / {Rate(s.DownloadBytesPerSecond)}";
         if (LiveNotificationSwitch.IsToggled) ShowLiveConnectionNotification(s);
     }
 
