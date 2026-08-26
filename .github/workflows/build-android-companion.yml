@@ -42,7 +42,7 @@ jobs:
       - name: Upload Companion APK
         uses: actions/upload-artifact@v4
         with:
-          name: NetPulse-Monitor-Companion-Android-v1.0.24
+          name: NetPulse-Monitor-Companion-Android-v1.0.25
           path: artifacts/android/NetPulse-Monitor-Companion-Android.apk
           if-no-files-found: error
           retention-days: 14
