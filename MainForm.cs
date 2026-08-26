@@ -488,7 +488,7 @@ internal sealed class MainForm : Form
         };
 
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 115));
-        _dashboardConnectionRowStyle = new RowStyle(SizeType.Absolute, 90);
+        _dashboardConnectionRowStyle = new RowStyle(SizeType.Absolute, 104);
         layout.RowStyles.Add(_dashboardConnectionRowStyle);
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 330));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -794,7 +794,7 @@ internal sealed class MainForm : Form
             Margin = new Padding(4, 2, 4, 2),
             BackColor = Color.White
         };
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 84));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 98));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         var statusPanel = new TableLayoutPanel
@@ -838,8 +838,8 @@ internal sealed class MainForm : Form
         selectors.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 72));
         selectors.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         selectors.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 210));
-        selectors.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        selectors.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+        selectors.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        selectors.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         var accessLabel = new Label
         {
             Text = "Access",
@@ -886,7 +886,7 @@ internal sealed class MainForm : Form
             _routerMetricGrid.Visible = _connectionDetailsExpanded;
             if (_dashboardConnectionRowStyle is not null)
                 _dashboardConnectionRowStyle.Height =
-                    _connectionDetailsExpanded ? 238 : 90;
+                    _connectionDetailsExpanded ? 252 : 104;
             _connectionDetailsToggleButton.Text = _connectionDetailsExpanded
                 ? "Hide router / line details"
                 : "Show router / line details";
@@ -898,13 +898,13 @@ internal sealed class MainForm : Form
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
-            Margin = new Padding(0, 1, 0, 0),
-            Padding = Padding.Empty
+            Margin = Padding.Empty,
+            Padding = new Padding(0, 3, 0, 3)
         };
         var configureButton = new Button
         {
             Text = "Configure router",
-            Size = new Size(118, 28),
+            Size = new Size(132, 34),
             Margin = new Padding(0)
         };
         configureButton.Click += async (_, _) =>
@@ -912,7 +912,7 @@ internal sealed class MainForm : Form
         var refreshButton = new Button
         {
             Text = "Reconnect",
-            Size = new Size(94, 28),
+            Size = new Size(104, 34),
             Margin = new Padding(4, 0, 0, 0)
         };
         refreshButton.Click += async (_, _) =>
@@ -930,7 +930,7 @@ internal sealed class MainForm : Form
         var rebootButton = new Button
         {
             Text = "Restart router",
-            Size = new Size(108, 28),
+            Size = new Size(120, 34),
             Margin = new Padding(4, 0, 0, 0)
         };
         rebootButton.Click += async (_, _) =>
