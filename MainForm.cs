@@ -488,7 +488,7 @@ internal sealed class MainForm : Form
         };
 
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 115));
-        _dashboardConnectionRowStyle = new RowStyle(SizeType.Absolute, 74);
+        _dashboardConnectionRowStyle = new RowStyle(SizeType.Absolute, 90);
         layout.RowStyles.Add(_dashboardConnectionRowStyle);
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 330));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -566,7 +566,7 @@ internal sealed class MainForm : Form
             Margin = new Padding(4, 5, 4, 1),
             Padding = new Padding(12, 4, 12, 4)
         };
-        diagnosticsStrip.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 175));
+        diagnosticsStrip.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 215));
         diagnosticsStrip.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         diagnosticsStrip.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         diagnosticsStrip.Controls.Add(new Label
@@ -794,7 +794,7 @@ internal sealed class MainForm : Form
             Margin = new Padding(4, 2, 4, 2),
             BackColor = Color.White
         };
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 84));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         var statusPanel = new TableLayoutPanel
@@ -808,7 +808,7 @@ internal sealed class MainForm : Form
         };
         statusPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
         statusPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        statusPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 520));
+        statusPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 560));
         statusPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         _routerConnectionState.Text = "NOT CONFIGURED";
@@ -837,9 +837,9 @@ internal sealed class MainForm : Form
         };
         selectors.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 72));
         selectors.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        selectors.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
-        selectors.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-        selectors.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        selectors.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 210));
+        selectors.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        selectors.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
         var accessLabel = new Label
         {
             Text = "Access",
@@ -886,7 +886,7 @@ internal sealed class MainForm : Form
             _routerMetricGrid.Visible = _connectionDetailsExpanded;
             if (_dashboardConnectionRowStyle is not null)
                 _dashboardConnectionRowStyle.Height =
-                    _connectionDetailsExpanded ? 220 : 74;
+                    _connectionDetailsExpanded ? 238 : 90;
             _connectionDetailsToggleButton.Text = _connectionDetailsExpanded
                 ? "Hide router / line details"
                 : "Show router / line details";
@@ -2616,15 +2616,28 @@ internal sealed class MainForm : Form
             : normalized.ToUpperInvariant();
     }
 
-    private static string FormatCurrentLteSet(RouterTelemetry telemetry)
+    private string FormatCurrentLteSet(RouterTelemetry telemetry)
     {
         if (!telemetry.IsConnected || string.IsNullOrWhiteSpace(telemetry.Band) ||
             telemetry.Band is "-" or "Unknown")
             return "Not registered";
-        string cell = IsKnownRadioIdentity(telemetry.CellId)
-            ? $" • CID {telemetry.CellId}"
-            : "";
-        return telemetry.Band + cell;
+        RouterCellLockTarget? displayedLock = GetDisplayedCellLockTarget();
+        string cid = IsKnownRadioIdentity(telemetry.CellId)
+            ? telemetry.CellId
+            : displayedLock?.CellId ?? "";
+        string pci = IsKnownRadioIdentity(telemetry.Pci)
+            ? telemetry.Pci
+            : displayedLock?.Pci ?? "";
+        string earfcn = IsKnownRadioIdentity(telemetry.Earfcn)
+            ? telemetry.Earfcn
+            : displayedLock?.Earfcn ?? "";
+        var identity = new List<string>();
+        if (IsKnownRadioIdentity(cid)) identity.Add($"CID {cid}");
+        if (IsKnownRadioIdentity(pci)) identity.Add($"PCI {pci}");
+        if (IsKnownRadioIdentity(earfcn)) identity.Add($"EARFCN {earfcn}");
+        return identity.Count == 0
+            ? telemetry.Band
+            : telemetry.Band + " • " + string.Join(" • ", identity);
     }
 
     private static string FormatOptionalNumber(double? value, string format) =>

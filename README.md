@@ -8,7 +8,7 @@ diagnostics and ISP-ready evidence.**
 · [Security policy](.github/SECURITY.md)
 · [Privacy notice](PRIVACY.md)
 
-NetPulse Monitor 1.0.22 is a native .NET 8 WinForms application for continuous
+NetPulse Monitor 1.0.23 is a native .NET 8 WinForms application for continuous
 Windows connection monitoring. It runs as a graphical Windows application and
 does not open a console window during normal use.
 

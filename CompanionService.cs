@@ -223,7 +223,7 @@ internal sealed class CompanionService : IAsyncDisposable
                     sha256 = Convert.ToHexString(await SHA256.HashDataAsync(source, cancellationToken));
                 string info = JsonSerializer.Serialize(new
                 {
-                    displayVersion = "1.0.22",
+                    displayVersion = "1.0.23",
                     versionCode = 11,
                     size = apk.Length,
                     sha256,
