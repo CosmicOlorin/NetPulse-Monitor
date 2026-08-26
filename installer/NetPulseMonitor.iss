@@ -1,5 +1,5 @@
 #define MyAppName "NetPulse Monitor"
-#define MyAppVersion "1.0.23"
+#define MyAppVersion "1.0.24"
 #define MyAppPublisher "CosmicOlorin"
 #define MyAppExeName "NetPulse Monitor.exe"
 
