@@ -9,16 +9,14 @@
     <Nullable>enable</Nullable>
     <ApplicationTitle>NetPulse Monitor</ApplicationTitle>
     <ApplicationId>com.cosmicolorin.netpulse.companion</ApplicationId>
-    <ApplicationDisplayVersion>1.0.24</ApplicationDisplayVersion>
-    <ApplicationVersion>17</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0.25</ApplicationDisplayVersion>
+    <ApplicationVersion>18</ApplicationVersion>
     <SupportedOSPlatformVersion>23.0</SupportedOSPlatformVersion>
   </PropertyGroup>
   <ItemGroup>
     <MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#00A6C8" />
     <MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#111820" BaseSize="128,128" />
-    <MauiImage Include="Resources\Images\*" />
     <MauiFont Include="Resources\Fonts\*" />
-    <MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
