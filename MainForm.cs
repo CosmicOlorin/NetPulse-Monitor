@@ -490,7 +490,7 @@ internal sealed class MainForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 115));
         _dashboardConnectionRowStyle = new RowStyle(SizeType.Absolute, 74);
         layout.RowStyles.Add(_dashboardConnectionRowStyle);
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 285));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 330));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
 
@@ -571,7 +571,7 @@ internal sealed class MainForm : Form
         diagnosticsStrip.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         diagnosticsStrip.Controls.Add(new Label
         {
-            Text = "PC → ROUTER / DNS",
+            Text = "PC → ROUTER + DNS",
             Dock = DockStyle.Fill,
             ForeColor = Color.DimGray,
             Font = new Font("Segoe UI", 8.5F),
@@ -835,9 +835,9 @@ internal sealed class MainForm : Form
             RowCount = 2,
             Padding = new Padding(8, 0, 0, 0)
         };
-        selectors.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));
+        selectors.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 72));
         selectors.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        selectors.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
+        selectors.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
         selectors.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
         selectors.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
         var accessLabel = new Label
@@ -876,8 +876,6 @@ internal sealed class MainForm : Form
 
         selectors.Controls.Add(accessLabel, 0, 0);
         selectors.Controls.Add(_connectionViewInput, 1, 0);
-        selectors.SetRowSpan(accessLabel, 2);
-        selectors.SetRowSpan(_connectionViewInput, 2);
 
         _connectionDetailsToggleButton.Text = "Show router / line details";
         _connectionDetailsToggleButton.Dock = DockStyle.Fill;
@@ -900,7 +898,7 @@ internal sealed class MainForm : Form
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
-            Margin = new Padding(6, 1, 0, 0),
+            Margin = new Padding(0, 1, 0, 0),
             Padding = Padding.Empty
         };
         var configureButton = new Button
@@ -961,7 +959,8 @@ internal sealed class MainForm : Form
         actions.Controls.Add(configureButton);
         actions.Controls.Add(refreshButton);
         actions.Controls.Add(rebootButton);
-        selectors.Controls.Add(actions, 2, 1);
+        selectors.Controls.Add(actions, 0, 1);
+        selectors.SetColumnSpan(actions, 3);
         statusPanel.Controls.Add(selectors, 2, 0);
 
         _routerMetricGrid.Dock = DockStyle.Fill;
